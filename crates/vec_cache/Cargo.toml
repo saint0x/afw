@@ -1,0 +1,8 @@
+[package]
+name = "vec_cache"
+version = "0.1.0"
+edition = "2021"
+description = "Lightweight vector database for embeddings"
+ 
+[dependencies]
+aria_runtime = { path = "../aria_runtime" } 

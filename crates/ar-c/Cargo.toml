@@ -1,0 +1,85 @@
+[package]
+name = "ar-c"
+version = "0.1.0"
+edition = "2021"
+authors = ["Aria Team"]
+description = "Aria Compiler - Universal agentic application compiler"
+license = "MIT"
+repository = "https://github.com/aria-dev/ar-c"
+keywords = ["aria", "compiler", "agentic", "typescript", "bundler"]
+categories = ["development-tools", "compilers"]
+
+[[bin]]
+name = "arc"
+path = "src/main.rs"
+
+[dependencies]
+# CLI and async runtime
+clap = { version = "4.5.8", features = ["derive"] }
+tokio = { version = "1.38.0", features = ["full"] }
+anyhow = "1.0.86"
+thiserror = "1.0"
+
+# Serialization and configuration
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# HTTP client for upload functionality
+reqwest = { version = "0.11", features = ["json", "stream"] }
+
+# File system and compression
+zip = { version = "2.4.2", features = ["deflate"] }
+walkdir = "2.5.0"
+
+# Logging and console output
+log = "0.4"
+env_logger = "0.10"
+console = "0.15"
+
+# Date/time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Regular expressions (placeholder for SWC)
+regex = "1.7"
+
+# Future: SWC integration (commented out for now)
+# swc = "0.258.26"
+swc_core = { version = "0.90.37", features = ["ecma_parser", "ecma_transforms", "ecma_transforms_typescript", "ecma_transforms_proposal", "ecma_visit", "__common", "ecma_ast", "ecma_codegen"] }
+swc_ecma_ast = "0.112.8"
+swc_ecma_visit = "0.98.7"
+
+# Future: File watching for dev mode
+# notify = "6.0"
+# notify-debouncer-mini = "0.3"
+
+[dev-dependencies]
+tempfile = "3.8"
+assert_cmd = "2.0"
+predicates = "3.0"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev]
+debug = true
+incremental = true
+
+# Workspace configuration for future sub-crates
+[workspace]
+members = [
+    ".",
+    # Future: "crates/swc-integration",
+    # Future: "crates/dsl-parser", 
+    # Future: "crates/bundle-format",
+]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[build-dependencies]
+vergen = { version = "8.0.0", features = ["build", "git", "gitcl"] }

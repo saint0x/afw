@@ -1,0 +1,9 @@
+[package]
+name = "telemetry"
+version = "0.1.0"
+edition = "2021"
+description = "Custom metrics and observability"
+ 
+[dependencies]
+aria_runtime = { path = "../aria_runtime" }
+serde_json = { workspace = true } 

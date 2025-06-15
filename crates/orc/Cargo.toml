@@ -1,0 +1,17 @@
+[package]
+name = "orc"
+version = "0.1.0"
+edition = "2021"
+description = "Orchestration layer - manages DAG planning and RL loops"
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+# Internal dependencies
+aria_runtime = { path = "../aria_runtime" }
+token_api = { path = "../token_api" } 

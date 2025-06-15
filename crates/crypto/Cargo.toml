@@ -1,0 +1,10 @@
+[package]
+name = "crypto"
+version = "0.1.0"
+edition = "2021"
+description = "Cryptographic utilities wrapper"
+ 
+[dependencies]
+aria_runtime = { path = "../aria_runtime" }
+blake3 = { workspace = true }
+ed25519-dalek = { workspace = true } 

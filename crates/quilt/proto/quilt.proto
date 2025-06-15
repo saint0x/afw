@@ -1,0 +1,121 @@
+syntax = "proto3";
+
+package quilt;
+
+// The main service for managing containers
+service QuiltService {
+    // Creates a new container with advanced features
+    rpc CreateContainer (CreateContainerRequest) returns (CreateContainerResponse);
+    // Gets the status of a container
+    rpc GetContainerStatus (GetContainerStatusRequest) returns (GetContainerStatusResponse);
+    // Gets the logs of a container
+    rpc GetContainerLogs (GetContainerLogsRequest) returns (GetContainerLogsResponse);
+    // Stops a running container
+    rpc StopContainer (StopContainerRequest) returns (StopContainerResponse);
+    // Removes a container
+    rpc RemoveContainer (RemoveContainerRequest) returns (RemoveContainerResponse);
+    // Executes a command in a running container
+    rpc ExecContainer (ExecContainerRequest) returns (ExecContainerResponse);
+}
+
+// Container status enumeration
+enum ContainerStatus {
+    PENDING = 0;   // Container created but not started
+    RUNNING = 1;   // Container is actively running
+    EXITED = 2;    // Container finished execution
+    FAILED = 3;    // Container failed to start or execute
+}
+
+message CreateContainerRequest {
+    // Basic container configuration
+    string image_path = 1;                          // Path to container image tarball
+    repeated string command = 2;                    // Command to execute in container
+    map<string, string> environment = 3;           // Environment variables
+    string working_directory = 4;                  // Working directory inside container
+    
+    // Setup commands for dynamic runtime installation
+    repeated string setup_commands = 5;            // Setup commands (e.g., "npm: typescript", "pip: requests")
+    
+    // Resource limits
+    int32 memory_limit_mb = 6;                     // Memory limit in megabytes (0 = default)
+    float cpu_limit_percent = 7;                   // CPU limit as percentage (0.0 = default)
+    
+    // Namespace configuration
+    bool enable_pid_namespace = 8;                 // Enable PID namespace isolation
+    bool enable_mount_namespace = 9;               // Enable mount namespace isolation
+    bool enable_uts_namespace = 10;                // Enable UTS namespace isolation (hostname)
+    bool enable_ipc_namespace = 11;                // Enable IPC namespace isolation
+    bool enable_network_namespace = 12;            // Enable network namespace isolation
+}
+
+message CreateContainerResponse {
+    string container_id = 1;                       // Generated container ID
+    bool success = 2;                              // Whether creation was successful
+    string error_message = 3;                      // Error message if creation failed
+}
+
+message GetContainerStatusRequest {
+    string container_id = 1;                       // Container ID to query
+}
+
+message GetContainerStatusResponse {
+    string container_id = 1;                       // Container ID
+    ContainerStatus status = 2;                    // Current container status
+    int32 exit_code = 3;                          // Exit code (if exited)
+    string error_message = 4;                      // Error message (if failed)
+    int32 pid = 5;                                // Process ID (if running)
+    uint64 created_at = 6;                        // Creation timestamp
+    uint64 memory_usage_bytes = 7;                // Current memory usage
+    string rootfs_path = 8;                       // Container rootfs path
+    string ip_address = 9;                        // Container IP address (ICC networking)
+}
+
+message LogEntry {
+    uint64 timestamp = 1;                         // Timestamp of log entry
+    string message = 2;                           // Log message content
+}
+
+message GetContainerLogsRequest {
+    string container_id = 1;                      // Container ID to get logs for
+}
+
+message GetContainerLogsResponse {
+    string container_id = 1;                      // Container ID
+    repeated LogEntry logs = 2;                   // All log entries
+}
+
+message StopContainerRequest {
+    string container_id = 1;                      // Container ID to stop
+    int32 timeout_seconds = 2;                    // Timeout before force kill (optional)
+}
+
+message StopContainerResponse {
+    bool success = 1;                             // Whether stop was successful
+    string error_message = 2;                     // Error message if stop failed
+}
+
+message RemoveContainerRequest {
+    string container_id = 1;                      // Container ID to remove
+    bool force = 2;                               // Force removal even if running
+}
+
+message RemoveContainerResponse {
+    bool success = 1;                             // Whether removal was successful
+    string error_message = 2;                     // Error message if removal failed
+}
+
+message ExecContainerRequest {
+    string container_id = 1;                      // Container ID to execute command in
+    repeated string command = 2;                  // Command and arguments to execute
+    string working_directory = 3;                 // Working directory (optional)
+    map<string, string> environment = 4;          // Additional environment variables
+    bool capture_output = 5;                      // Whether to capture and return output
+}
+
+message ExecContainerResponse {
+    bool success = 1;                             // Whether execution was successful
+    int32 exit_code = 2;                         // Exit code of the executed command
+    string stdout = 3;                            // Standard output (if capture_output=true)
+    string stderr = 4;                            // Standard error (if capture_output=true)
+    string error_message = 5;                     // Error message if execution failed
+} 

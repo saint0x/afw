@@ -1,0 +1,19 @@
+[package]
+name = "token_api"
+version = "0.1.0"
+edition = "2021"
+description = "Thin wrapper over Quilt sync-engine for resource token management"
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tonic = { workspace = true }
+prost = { workspace = true }
+
+[build-dependencies]
+tonic-build = { workspace = true }
+prost-build = { workspace = true } 

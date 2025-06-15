@@ -1,0 +1,17 @@
+[package]
+name = "pkg_store"
+version = "0.1.0"
+edition = "2021"
+description = "Content-addressed storage and verification for .aria bundles"
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+# Crypto for signatures and content addressing
+blake3 = { workspace = true }
+ed25519-dalek = { workspace = true } 
