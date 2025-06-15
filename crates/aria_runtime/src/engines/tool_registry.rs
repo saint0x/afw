@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 use crate::types::*;
 use crate::errors::{AriaResult, AriaError, ErrorCode, ErrorCategory, ErrorSeverity};
+use crate::engines::llm::LLMHandler;
+use crate::engines::llm::types::{LLMRequest, LLMMessage, LLMConfig};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -15,6 +17,8 @@ pub struct ToolRegistry {
     execution_stats: Arc<RwLock<HashMap<String, ToolExecutionStats>>>,
     /// Bundle store for loading .aria bundles
     bundle_store: Option<Arc<dyn BundleStoreInterface>>,
+    /// LLM handler for executing LLM-based tools
+    llm_handler: Arc<LLMHandler>,
 }
 
 #[derive(Debug, Clone)]
@@ -60,11 +64,12 @@ pub enum SecurityLevel {
 }
 
 impl ToolRegistry {
-    pub fn new(bundle_store: Option<Arc<dyn BundleStoreInterface>>) -> Self {
+    pub fn new(bundle_store: Option<Arc<dyn BundleStoreInterface>>, llm_handler: Arc<LLMHandler>) -> Self {
         let registry = Self {
             tools: Arc::new(RwLock::new(HashMap::new())),
             execution_stats: Arc::new(RwLock::new(HashMap::new())),
             bundle_store,
+            llm_handler,
         };
         
         // Register built-in tools asynchronously
@@ -398,6 +403,18 @@ impl ToolRegistry {
         tool_stats.last_execution = Some(std::time::SystemTime::now());
         tool_stats.error_rate = 1.0 - (tool_stats.successful_executions as f64 / tool_stats.total_executions as f64);
     }
+
+    /// Get detailed tool information
+    pub async fn get_tool_info(&self, tool_name: &str) -> Option<RegistryEntry> {
+        let tools = self.tools.read().await;
+        tools.get(tool_name).cloned()
+    }
+
+    /// Check if a tool is available for execution
+    pub async fn is_tool_available(&self, tool_name: &str) -> bool {
+        let tools = self.tools.read().await;
+        tools.contains_key(tool_name)
+    }
 }
 
 #[async_trait]
@@ -501,10 +518,10 @@ impl ToolRegistry {
     }
 
     /// Execute an LLM-based tool (like ponderTool, createPlanTool)
-    async fn execute_llm_tool(&self, _provider: &str, _model: &str, tool_name: &str, parameters: Value) -> AriaResult<ToolResult> {
+    async fn execute_llm_tool(&self, provider: &str, model: &str, tool_name: &str, parameters: Value) -> AriaResult<ToolResult> {
         match tool_name {
-            "ponderTool" => self.execute_ponder_tool(parameters).await,
-            "createPlanTool" => self.execute_create_plan_tool(parameters).await,
+            "ponderTool" => self.execute_ponder_tool(parameters, provider, model).await,
+            "createPlanTool" => self.execute_create_plan_tool(parameters, provider, model).await,
             _ => Err(AriaError::new(
                 ErrorCode::ToolExecutionFailed,
                 ErrorCategory::Tool,
@@ -515,7 +532,7 @@ impl ToolRegistry {
     }
 
     /// Execute the ponder tool (critical for Symphony's reflection)
-    async fn execute_ponder_tool(&self, parameters: Value) -> AriaResult<ToolResult> {
+    async fn execute_ponder_tool(&self, parameters: Value, provider: &str, model: &str) -> AriaResult<ToolResult> {
         let query = parameters.get("query")
             .and_then(|v| v.as_str())
             .ok_or_else(|| AriaError::new(
@@ -525,31 +542,64 @@ impl ToolRegistry {
                 "ponderTool requires 'query' parameter"
             ))?;
 
-        // TODO: Replace with actual LLM call
-        // For now, return a structured response that matches Symphony's expectations
-        let conclusion = serde_json::json!({
-            "summary": format!("Analyzed the situation: {}", query),
-            "confidence": 0.8,
-            "nextSteps": vec![
-                "Continue with the current approach",
-                "Monitor for potential issues"
-            ]
-        });
+        let context = parameters.get("context").cloned().unwrap_or(Value::Null);
+
+        let system_prompt = "You are an advanced cognitive engine designed for deep, structured thinking. Your purpose is to analyze problems with consciousness-emergent thought patterns. Your response must be a single JSON object with the keys: 'summary', 'confidence', 'nextSteps', 'analysisType'.";
+
+        let user_prompt = format!(
+            "Analyze the following situation and provide strategic insights in a JSON format.\n\nSituation: {}\n\nContext: {}",
+            query,
+            serde_json::to_string_pretty(&context).unwrap_or_default()
+        );
+
+        let request = LLMRequest {
+            messages: vec![
+                LLMMessage {
+                    role: "system".to_string(),
+                    content: system_prompt.to_string(),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                LLMMessage {
+                    role: "user".to_string(),
+                    content: user_prompt,
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+            ],
+            config: LLMConfig {
+                model: Some(model.to_string()),
+                temperature: 0.5,
+                ..Default::default()
+            },
+            provider: Some(provider.to_string()),
+            tools: None,
+            tool_choice: None,
+            stream: None,
+        };
+
+        let llm_response = self.llm_handler.complete(request).await?;
+
+        let result_json: Value = serde_json::from_str(&llm_response.content)
+            .map_err(|e| AriaError::new(
+                ErrorCode::LLMInvalidResponse,
+                ErrorCategory::Tool,
+                ErrorSeverity::High,
+                format!("Failed to parse ponderTool LLM response as JSON: {}", e)
+            ))?;
 
         Ok(ToolResult {
             success: true,
-            result: Some(serde_json::json!({
-                "conclusion": conclusion
-            })),
+            result: Some(result_json),
             error: None,
             metadata: std::collections::HashMap::new(),
-            execution_time_ms: 100, // Mock timing
+            execution_time_ms: 150, // This should be updated with actuals
             resource_usage: None,
         })
     }
 
     /// Execute the create plan tool (critical for Symphony's planning)
-    async fn execute_create_plan_tool(&self, parameters: Value) -> AriaResult<ToolResult> {
+    async fn execute_create_plan_tool(&self, parameters: Value, provider: &str, model: &str) -> AriaResult<ToolResult> {
         let objective = parameters.get("objective")
             .and_then(|v| v.as_str())
             .ok_or_else(|| AriaError::new(
@@ -559,35 +609,62 @@ impl ToolRegistry {
                 "createPlanTool requires 'objective' parameter"
             ))?;
 
-        // TODO: Replace with actual LLM call
-        // For now, return a structured plan that matches Symphony's expectations
-        let plan = serde_json::json!({
-            "steps": [
-                {
-                    "description": format!("Analyze the objective: {}", objective),
-                    "tool": "ponderTool",
-                    "parameters": {
-                        "query": format!("How should I approach: {}", objective)
-                    }
+        let context = parameters.get("context").cloned().unwrap_or(Value::Null);
+        
+        let system_prompt = "You are a meticulous project planning assistant. Your sole purpose is to create a JSON execution plan. Given an objective and a list of available tools, you MUST generate a JSON array of plan steps. Each object in the array represents a single, concrete step and must have these exact keys: 'step', 'useTool', 'tool', 'description', 'parameters'. Your entire output must be a single, raw JSON array.";
+
+        let user_prompt = format!(
+            "Create a JSON execution plan for the objective: \"{}\".\n\nContext: {}",
+            objective,
+            serde_json::to_string_pretty(&context).unwrap_or_default()
+        );
+
+        let request = LLMRequest {
+            messages: vec![
+                LLMMessage {
+                    role: "system".to_string(),
+                    content: system_prompt.to_string(),
+                    tool_calls: None,
+                    tool_call_id: None,
                 },
-                {
-                    "description": "Execute the main task",
-                    "tool": "TBD",
-                    "parameters": {}
-                }
-            ]
-        });
+                LLMMessage {
+                    role: "user".to_string(),
+                    content: user_prompt,
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+            ],
+            config: LLMConfig {
+                model: Some(model.to_string()),
+                temperature: 0.1,
+                ..Default::default()
+            },
+            provider: Some(provider.to_string()),
+            tools: None,
+            tool_choice: None,
+            stream: None,
+        };
+
+        let llm_response = self.llm_handler.complete(request).await?;
+
+        let plan_json: Value = serde_json::from_str(&llm_response.content)
+            .map_err(|e| AriaError::new(
+                ErrorCode::LLMInvalidResponse,
+                ErrorCategory::Tool,
+                ErrorSeverity::High,
+                format!("Failed to parse createPlanTool LLM response as JSON: {}", e)
+            ))?;
 
         Ok(ToolResult {
             success: true,
             result: Some(serde_json::json!({
                 "plan": {
-                    "generatedPlan": serde_json::to_string(&plan).unwrap_or_default()
+                    "generatedPlan": plan_json.to_string(),
                 }
             })),
             error: None,
             metadata: std::collections::HashMap::new(),
-            execution_time_ms: 200, // Mock timing
+            execution_time_ms: 250, // This should be updated with actuals
             resource_usage: None,
         })
     }

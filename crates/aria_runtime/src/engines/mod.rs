@@ -41,7 +41,7 @@ impl AriaEngines {
         let llm_handler = LLMHandler::new(llm_config);
         
         // Create tool registry with no bundle store for now
-        let tool_registry = ToolRegistry::new(None);
+        let tool_registry = ToolRegistry::new(None, Arc::new(llm_handler.clone()));
         
         // Create system prompt service
         let system_prompt = SystemPromptService::new();
@@ -55,9 +55,9 @@ impl AriaEngines {
             llm_handler_interface,
             None, // No container manager for now
         );
-        let planning = PlanningEngine::new();
-        let conversation = ConversationEngine::new();
-        let reflection = ReflectionEngine::new();
+        let planning = PlanningEngine::new(Arc::new(tool_registry.clone()));
+        let conversation = ConversationEngine::new(Some(Box::new(LLMHandlerWrapper::new(llm_handler.clone()))));
+        let reflection = ReflectionEngine::new(Arc::new(tool_registry.clone()));
         let context_manager = ContextManagerEngine::new();
         
         Ok(Self {

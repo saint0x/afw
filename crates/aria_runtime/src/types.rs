@@ -467,7 +467,7 @@ pub struct ConversationMetadata {
     pub reflection: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ConversationState {
     Initiated,
     Working,

@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use bytes::Bytes;
 use futures::Stream;
 use reqwest::{Client, header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE}};
 use serde::{Deserialize, Serialize};
@@ -410,7 +411,7 @@ impl LLMProvider for OpenAIProvider {
             return Err(self.handle_api_error(status, &body));
         }
 
-        let stream = OpenAIStreamWrapper::new(response);
+        let stream = OpenAIStreamWrapper::new(Box::pin(response.bytes_stream()));
         Ok(Box::new(stream))
     }
 
@@ -434,68 +435,115 @@ impl LLMProvider for OpenAIProvider {
 
 /// Stream wrapper for OpenAI streaming responses
 pub struct OpenAIStreamWrapper {
-    response: reqwest::Response,
+    stream: Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>>,
     buffer: String,
 }
 
 impl OpenAIStreamWrapper {
-    fn new(response: reqwest::Response) -> Self {
+    fn new(stream: Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>>) -> Self {
         Self {
-            response,
+            stream,
             buffer: String::new(),
         }
     }
 
-    fn parse_chunk(&self, chunk: &str) -> Option<AriaResult<LLMResponse>> {
-        if chunk.starts_with("data: ") {
-            let data = &chunk[6..];
-            if data == "[DONE]" {
-                return None;
-            }
+    fn parse_chunk(&mut self) -> Option<AriaResult<LLMResponse>> {
+        // Find the first complete message ("\n\n")
+        if let Some(end_of_message) = self.buffer.find("\n\n") {
+            let message_str = self.buffer[..end_of_message].to_string();
+            // Remove the processed message from the buffer
+            self.buffer.drain(..end_of_message + 2);
 
-            match serde_json::from_str::<OpenAIStreamChunk>(data) {
-                Ok(stream_chunk) => {
-                    if let Some(choice) = stream_chunk.choices.into_iter().next() {
-                        let response = LLMResponse {
-                            content: choice.delta.content.unwrap_or_default(),
-                            model: stream_chunk.model,
-                            provider: "openai".to_string(),
-                            token_usage: None, // Usage is typically only in the final chunk
-                            finish_reason: choice.finish_reason.unwrap_or_else(|| "continue".to_string()),
-                            tool_calls: choice.delta.tool_calls.map(|calls| {
-                                calls.into_iter().map(|call| ToolCall {
-                                    id: call.id,
-                                    name: call.function.name,
-                                    arguments: call.function.arguments,
-                                }).collect()
-                            }),
-                        };
-                        Some(Ok(response))
-                    } else {
-                        None
+            if message_str.starts_with("data: ") {
+                let data = &message_str[6..];
+                if data.trim() == "[DONE]" {
+                    // End of stream signal from OpenAI
+                    return None;
+                }
+
+                match serde_json::from_str::<OpenAIStreamChunk>(data) {
+                    Ok(stream_chunk) => {
+                        if let Some(choice) = stream_chunk.choices.into_iter().next() {
+                            let response = LLMResponse {
+                                content: choice.delta.content.unwrap_or_default(),
+                                model: stream_chunk.model,
+                                provider: "openai".to_string(),
+                                token_usage: None, // Usage is typically only in the final chunk which is not handled here
+                                finish_reason: choice.finish_reason.unwrap_or_else(|| "streaming".to_string()),
+                                tool_calls: choice.delta.tool_calls.map(|calls| {
+                                    calls.into_iter().map(|call| ToolCall {
+                                        id: call.id,
+                                        name: call.function.name,
+                                        arguments: call.function.arguments.clone(),
+                                    }).collect()
+                                }),
+                            };
+                            return Some(Ok(response));
+                        }
                     }
-                },
-                Err(e) => Some(Err(AriaError::new(
-                    ErrorCode::LLMInvalidResponse,
-                    ErrorCategory::LLM,
-                    ErrorSeverity::Medium,
-                    format!("Failed to parse stream chunk: {}", e)
-                ))),
+                    Err(e) => {
+                        // Failed to parse a chunk, which is a stream error
+                        return Some(Err(AriaError::new(
+                            ErrorCode::LLMInvalidResponse,
+                            ErrorCategory::LLM,
+                            ErrorSeverity::Medium,
+                            format!("Failed to parse stream chunk: {}", e),
+                        )));
+                    }
+                }
             }
-        } else {
-            None
         }
+        // No complete message in buffer yet
+        None
     }
 }
 
 impl Stream for OpenAIStreamWrapper {
     type Item = AriaResult<LLMResponse>;
 
-    fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // This is a simplified implementation - in production you'd want proper streaming
-        // For now, we'll return Poll::Pending to indicate the stream is not ready
-        // A full implementation would use the response.bytes_stream() and parse SSE format
-        Poll::Pending
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        loop {
+            // First, try to parse a message from the existing buffer
+            if let Some(message_result) = self.parse_chunk() {
+                return Poll::Ready(Some(message_result));
+            }
+
+            // If no full message is in the buffer, poll the byte stream for more data
+            match self.stream.as_mut().poll_next(cx) {
+                Poll::Ready(Some(Ok(bytes))) => {
+                    // Append new data to the buffer.
+                    self.buffer.push_str(&String::from_utf8_lossy(&bytes));
+                    // Loop again to try parsing the updated buffer
+                }
+                Poll::Ready(Some(Err(e))) => {
+                    // The underlying byte stream produced an error
+                    return Poll::Ready(Some(Err(AriaError::new(
+                        ErrorCode::LLMApiError,
+                        ErrorCategory::LLM,
+                        ErrorSeverity::High,
+                        format!("Underlying stream error: {}", e),
+                    ))));
+                }
+                Poll::Ready(None) => {
+                    // The byte stream is finished. If the buffer is empty, the stream is done.
+                    // If the buffer is not empty, it means there's a partial message left, which is an error.
+                    return if self.buffer.is_empty() {
+                        Poll::Ready(None)
+                    } else {
+                        Poll::Ready(Some(Err(AriaError::new(
+                            ErrorCode::LLMInvalidResponse,
+                            ErrorCategory::LLM,
+                            ErrorSeverity::Medium,
+                            "Stream ended with incomplete data".to_string(),
+                        ))))
+                    };
+                }
+                Poll::Pending => {
+                    // The byte stream is not ready, so we are not ready.
+                    return Poll::Pending;
+                }
+            }
+        }
     }
 }
 
