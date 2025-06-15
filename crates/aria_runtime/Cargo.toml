@@ -4,6 +4,14 @@ version = "0.1.0"
 edition = "2021"
 description = "Core Aria runtime"
 
+[[bin]]
+name = "runtime-demo"
+path = "../../script.rs"
+
+[[bin]]
+name = "multi-tool-demo"
+path = "../../script2.rs"
+
 [dependencies]
 # Async runtime
 tokio = { version = "1.0", features = ["full"] }

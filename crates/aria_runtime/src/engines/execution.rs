@@ -415,8 +415,16 @@ impl ExecutionEngine {
         agent_config: &AgentConfig,
         _context: &RuntimeContext,
     ) -> AriaResult<ToolResult> {
+        println!("🔍 DEBUG: Starting execute_single_step");
+        println!("🔍 DEBUG: Task: {}", task);
+        println!("🔍 DEBUG: Agent: {}", agent_config.name);
+        println!("🔍 DEBUG: Agent tools: {:?}", agent_config.tools);
+        
         let system_prompt = self.system_prompt_service.generate_system_prompt(agent_config, !agent_config.tools.is_empty());
         let has_tools = !agent_config.tools.is_empty();
+        
+        println!("🔍 DEBUG: Has tools: {}", has_tools);
+        println!("🔍 DEBUG: System prompt length: {}", system_prompt.len());
 
         let messages = vec![
             LLMMessage {
@@ -432,6 +440,8 @@ impl ExecutionEngine {
                 tool_call_id: None,
             },
         ];
+
+        println!("🔍 DEBUG: Creating LLM request with {} messages", messages.len());
 
         let llm_request = LLMRequest {
             messages,
@@ -449,14 +459,23 @@ impl ExecutionEngine {
             stream: Some(false),
         };
 
+        println!("🔍 DEBUG: Calling LLM handler...");
         let llm_response = self.llm_handler.complete(llm_request).await?;
+        
+        println!("🔍 DEBUG: LLM Response received!");
+        println!("🔍 DEBUG: Response content length: {}", llm_response.content.len());
+        println!("🔍 DEBUG: Response content (first 200 chars): {}", 
+            &llm_response.content.chars().take(200).collect::<String>());
+        println!("🔍 DEBUG: Response model: {}", llm_response.model);
 
         if has_tools {
+            println!("🔍 DEBUG: Agent has tools, attempting to parse response for tool execution");
             // Parse JSON response and potentially execute tools
             self.parse_and_execute_tools(&llm_response.content, agent_config).await
         } else {
+            println!("🔍 DEBUG: Agent has no tools, returning direct LLM response");
             // Direct LLM response
-            Ok(ToolResult {
+            let result = ToolResult {
                 success: true,
                 result: Some(serde_json::json!({
                     "response": llm_response.content,
@@ -468,7 +487,12 @@ impl ExecutionEngine {
                 metadata: HashMap::new(),
                 execution_time_ms: 0,
                 resource_usage: None,
-            })
+            };
+            
+            println!("🔍 DEBUG: Created ToolResult with success: {}", result.success);
+            println!("🔍 DEBUG: ToolResult response: {:?}", result.result);
+            
+            Ok(result)
         }
     }
 

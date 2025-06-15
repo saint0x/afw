@@ -3,6 +3,7 @@ use crate::engines::llm::types::{LLMConfig, LLMMessage, LLMRequest};
 use crate::engines::llm::LLMHandler;
 use crate::errors::{AriaError, AriaResult, ErrorCategory, ErrorCode, ErrorSeverity};
 use crate::types::{self, ResourceRequirements, ToolResult};
+use crate::tools::standard::{create_plan_tool_handler, ponder_tool_handler};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -110,11 +111,17 @@ impl ToolRegistry {
             let builtin_tools = vec![
                 Self::create_ponder_tool_static(),
                 Self::create_create_plan_tool_static(),
+                Self::create_calculator_tool_static(),
+                Self::create_text_analyzer_tool_static(),
+                Self::create_file_writer_tool_static(),
+                Self::create_data_formatter_tool_static(),
             ];
             let mut tools = tools_arc.write().await;
             for tool in builtin_tools {
+                println!("🔧 Registering builtin tool: {}", tool.name);
                 tools.insert(tool.name.clone(), tool);
             }
+            println!("✅ Registered {} builtin tools", tools.len());
         });
         registry
     }
@@ -146,6 +153,90 @@ impl ToolRegistry {
             security_level: SecurityLevel::Safe,
         }
     }
+
+    fn create_calculator_tool_static() -> RegistryEntry {
+        RegistryEntry {
+            name: "calculator".to_string(),
+            description: "Performs mathematical calculations including basic arithmetic, geometry, and advanced functions".to_string(),
+            parameters: serde_json::json!({ 
+                "type": "object", 
+                "properties": { 
+                    "operation": { "type": "string", "description": "The mathematical operation to perform" },
+                    "expression": { "type": "string", "description": "The mathematical expression to calculate" }
+                }, 
+                "required": ["operation"] 
+            }),
+            tool_type: ToolType::LLM { provider: "openai".to_string(), model: "gpt-4".to_string() },
+            bundle_id: None,
+            version: "1.0.0".to_string(),
+            capabilities: vec!["mathematics".to_string(), "calculation".to_string()],
+            resource_requirements: ResourceRequirements::default(),
+            security_level: SecurityLevel::Safe,
+        }
+    }
+
+    fn create_text_analyzer_tool_static() -> RegistryEntry {
+        RegistryEntry {
+            name: "text_analyzer".to_string(),
+            description: "Analyzes text for patterns, relationships, insights, and extracts meaningful information".to_string(),
+            parameters: serde_json::json!({ 
+                "type": "object", 
+                "properties": { 
+                    "text": { "type": "string", "description": "The text to analyze" },
+                    "analysis_type": { "type": "string", "description": "Type of analysis to perform" }
+                }, 
+                "required": ["text"] 
+            }),
+            tool_type: ToolType::LLM { provider: "openai".to_string(), model: "gpt-4".to_string() },
+            bundle_id: None,
+            version: "1.0.0".to_string(),
+            capabilities: vec!["analysis".to_string(), "text_processing".to_string()],
+            resource_requirements: ResourceRequirements::default(),
+            security_level: SecurityLevel::Safe,
+        }
+    }
+
+    fn create_file_writer_tool_static() -> RegistryEntry {
+        RegistryEntry {
+            name: "file_writer".to_string(),
+            description: "Creates and writes content to files with proper formatting and structure".to_string(),
+            parameters: serde_json::json!({ 
+                "type": "object", 
+                "properties": { 
+                    "filename": { "type": "string", "description": "The name of the file to create" },
+                    "content": { "type": "string", "description": "The content to write to the file" }
+                }, 
+                "required": ["filename", "content"] 
+            }),
+            tool_type: ToolType::LLM { provider: "openai".to_string(), model: "gpt-4".to_string() },
+            bundle_id: None,
+            version: "1.0.0".to_string(),
+            capabilities: vec!["file_operations".to_string(), "content_creation".to_string()],
+            resource_requirements: ResourceRequirements::default(),
+            security_level: SecurityLevel::Limited,
+        }
+    }
+
+    fn create_data_formatter_tool_static() -> RegistryEntry {
+        RegistryEntry {
+            name: "data_formatter".to_string(),
+            description: "Formats data into structured, readable formats including tables, reports, and summaries".to_string(),
+            parameters: serde_json::json!({ 
+                "type": "object", 
+                "properties": { 
+                    "data": { "type": "string", "description": "The data to format" },
+                    "format_type": { "type": "string", "description": "The desired output format" }
+                }, 
+                "required": ["data"] 
+            }),
+            tool_type: ToolType::LLM { provider: "openai".to_string(), model: "gpt-4".to_string() },
+            bundle_id: None,
+            version: "1.0.0".to_string(),
+            capabilities: vec!["formatting".to_string(), "data_presentation".to_string()],
+            resource_requirements: ResourceRequirements::default(),
+            security_level: SecurityLevel::Safe,
+        }
+    }
 }
 
 #[async_trait]
@@ -162,34 +253,73 @@ impl ToolRegistryInterface for ToolRegistry {
 
         match &tool_entry.tool_type {
             ToolType::LLM { provider, model } => {
-                let mut llm_params = HashMap::new();
-                if let Some(obj) = parameters.as_object() {
-                    for (k,v) in obj {
-                        llm_params.insert(k.clone(), v.clone());
+                // Use specialized tool implementations for planning and cognitive tools
+                match name {
+                    "createPlanTool" => {
+                        println!("🔧 Using specialized createPlanTool implementation");
+                        create_plan_tool_handler(parameters, &self.llm_handler).await
+                    }
+                    "ponderTool" => {
+                        println!("🔧 Using specialized ponderTool implementation");
+                        ponder_tool_handler(parameters, &self.llm_handler).await
+                    }
+                    _ => {
+                        // Generic LLM tool execution for other tools
+                        let mut llm_params = HashMap::new();
+                        if let Some(obj) = parameters.as_object() {
+                            for (k,v) in obj {
+                                llm_params.insert(k.clone(), v.clone());
+                            }
+                        }
+
+                        // Safely extract query parameter or use tool name as fallback
+                        let default_query = format!("Execute {} tool", name);
+                        let query_content = if let Some(query_val) = llm_params.get("query").and_then(|v| v.as_str()) {
+                            query_val
+                        } else if let Some(first_val) = llm_params.values().next().and_then(|v| v.as_str()) {
+                            first_val
+                        } else {
+                            &default_query
+                        };
+
+                        let request = LLMRequest {
+                            messages: vec![LLMMessage { 
+                                role: "user".to_string(), 
+                                content: query_content.to_string(), 
+                                tool_calls: None, 
+                                tool_call_id: None 
+                            }],
+                            config: LLMConfig {
+                                model: Some(model.clone()),
+                                temperature: 0.7,
+                                max_tokens: 2000,
+                                top_p: None,
+                                frequency_penalty: None,
+                                presence_penalty: None,
+                            },
+                            provider: Some(provider.clone()),
+                            tools: None,
+                            tool_choice: None,
+                            stream: Some(false),
+                        };
+                        
+                        let response = self.llm_handler.complete(request).await?;
+                        
+                        Ok(ToolResult {
+                            success: true,
+                            result: Some(serde_json::json!({
+                                "response": response.content,
+                                "tool": name,
+                                "provider": provider,
+                                "model": model
+                            }).into()),
+                            error: None,
+                            metadata: HashMap::new(),
+                            execution_time_ms: 0,
+                            resource_usage: None,
+                        })
                     }
                 }
-
-                let request = LLMRequest {
-                    messages: vec![LLMMessage { role: "user".to_string(), content: llm_params.get("query").unwrap().to_string(), tool_calls: None, tool_call_id: None }],
-                    config: LLMConfig::default(),
-                    provider: Some(provider.clone()),
-                    tools: None,
-                    tool_choice: None,
-                    stream: Some(false),
-                };
-                let response = self.llm_handler.complete(request).await?;
-                let result_val: Value = serde_json::from_str(&response.content)
-                    .map_err(|e| AriaError::new(
-                        ErrorCode::LLMInvalidResponse,
-                        ErrorCategory::LLM,
-                        ErrorSeverity::Medium,
-                        &format!("Failed to parse tool result: {}", e)
-                    ))?;
-                Ok(ToolResult {
-                    success: true,
-                    result: Some(result_val.into()),
-                    ..Default::default()
-                })
             }
             _ => Err(AriaError::new(
                 ErrorCode::NotSupported,

@@ -86,3 +86,7 @@ yarn.lock
 
 # Generated documentation
 doc/
+
+# Scripts with sensitive data
+script.rs
+script2.rs

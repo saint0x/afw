@@ -35,7 +35,7 @@ pub struct AriaEngines {
     pub conversation: ConversationEngine,
     pub reflection: ReflectionEngine,
     pub context_manager: ContextManagerEngine,
-    pub llm_handler: LLMHandler,
+    pub llm_handler: std::sync::Arc<LLMHandler>,
     pub tool_registry: ToolRegistry,
     pub system_prompt: SystemPromptService,
 }
@@ -73,11 +73,11 @@ impl AriaEngines {
 
 /// Wrapper to implement LLMHandlerInterface for LLMHandler
 pub struct LLMHandlerWrapper {
-    handler: LLMHandler,
+    handler: std::sync::Arc<LLMHandler>,
 }
 
 impl LLMHandlerWrapper {
-    pub fn new(handler: LLMHandler) -> Self {
+    pub fn new(handler: std::sync::Arc<LLMHandler>) -> Self {
         Self { handler }
     }
 }
@@ -99,9 +99,8 @@ impl LLMHandlerInterface for LLMHandlerWrapper {
     }
     
     fn get_providers(&self) -> Vec<String> {
-        // This needs to be async, but trait requires sync
-        // For now return empty - this will be fixed in Phase 2
-        Vec::new()
+        // Use the sync method from the singleton pattern
+        self.handler.get_available_providers()
     }
     
     async fn set_default_provider(&self, _provider: &str) -> AriaResult<()> {
@@ -127,7 +126,7 @@ impl LLMHandlerInterface for LLMHandlerWrapper {
     
     async fn health_check_provider(&self, _provider: &str) -> AriaResult<bool> {
         // Simple health check - check if any providers are available
-        let providers = self.handler.get_available_providers().await;
+        let providers = self.handler.get_available_providers();
         Ok(!providers.is_empty())
     }
 }

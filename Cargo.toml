@@ -1,14 +1,15 @@
 [workspace]
 members = [
-    "crates/aria_runtime", # Core Aria runtime
-    "crates/orc",          # Orchestration layer (wraps aria_runtime)
-    "crates/token_api",    # Quilt sync-engine wrapper  
-    "crates/state_store",  # Custom KV store (no RocksDB)
-    "crates/vec_cache",    # Lightweight vector database
-    "crates/pkg_store",    # Content-addressed storage for .aria files
-    "crates/hostfx",       # Host function interfaces (LLM, GPU, etc.)
-    "crates/telemetry",    # Custom metrics and observability
-    "crates/crypto",       # Crypto utilities wrapper
+    "crates/aria_runtime",
+    "crates/crypto",
+    "crates/hostfx",
+    "crates/orc",
+    "crates/pkg_store",
+    "crates/quilt",
+    "crates/state_store",
+    "crates/telemetry",
+    "crates/token_api",
+    "crates/vec_cache",
 ]
 
 [workspace.dependencies]
@@ -83,3 +84,7 @@ path = "src/bin/aria-fw.rs"
 [[bin]]
 name = "aria-cli"
 path = "src/bin/aria-cli.rs"
+
+[[bin]]
+name = "runtime-demo"
+path = "script.rs"

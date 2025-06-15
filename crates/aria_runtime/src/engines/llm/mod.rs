@@ -6,18 +6,17 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::time::Duration;
 use types::*;
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Instant};
 
 /// Main LLM handler interface for provider abstraction
 #[async_trait]
 pub trait LLMHandlerInterface: Send + Sync {
     /// Complete a text prompt with the specified provider
-    async fn complete(&self, request: LLMRequest) -> AriaResult<LLMResponse>;
+    async fn complete(&self, request: types::LLMRequest) -> AriaResult<types::LLMResponse>;
     
     /// Stream completion response (for future implementation)
-    async fn stream_complete(&self, request: LLMRequest) -> AriaResult<LLMStreamResponse>;
+    async fn stream_complete(&self, request: types::LLMRequest) -> AriaResult<types::LLMStreamResponse>;
     
     /// Get available providers
     fn get_providers(&self) -> Vec<String>;
@@ -26,23 +25,41 @@ pub trait LLMHandlerInterface: Send + Sync {
     async fn set_default_provider(&self, provider: &str) -> AriaResult<()>;
     
     /// Get provider capabilities
-    async fn get_provider_capabilities(&self, provider: &str) -> AriaResult<ProviderCapabilities>;
+    async fn get_provider_capabilities(&self, provider: &str) -> AriaResult<types::ProviderCapabilities>;
     
     /// Health check for specific provider
     async fn health_check_provider(&self, provider: &str) -> AriaResult<bool>;
 }
 
-/// Production-grade LLM handler that manages multiple providers and implements
-/// intelligent caching, fallbacks, and cost optimization
+/// Configuration for LLM providers (matches Symphony SDK pattern)
+#[derive(Debug, Clone)]
+pub struct LLMConfig {
+    pub provider: String,
+    pub api_key: String,
+    pub model: Option<String>,
+    pub temperature: Option<f32>,
+    pub max_tokens: Option<u32>,
+    pub timeout: Option<u64>,
+}
+
+/// Request configuration (no sensitive data)
+#[derive(Debug, Clone)]
+pub struct LLMRequestConfig {
+    pub model: Option<String>,
+    pub temperature: Option<f32>,
+    pub max_tokens: Option<u32>,
+    pub timeout: Option<u64>,
+}
+
+/// Production-grade LLM handler that matches Symphony SDK proven pattern
+/// Singleton pattern for global access, environment-based initialization
 pub struct LLMHandler {
     /// Registered LLM providers indexed by name
-    providers: Arc<RwLock<HashMap<String, Box<dyn LLMProvider>>>>,
+    providers: Arc<Mutex<HashMap<String, Box<dyn LLMProvider>>>>,
     /// Default provider name
-    default_provider: Arc<RwLock<Option<String>>>,
+    default_provider: Arc<Mutex<Option<String>>>,
     /// Response cache for cost optimization
-    response_cache: Arc<RwLock<HashMap<String, CachedResponse>>>,
-    /// Request metrics for monitoring
-    metrics: Arc<RwLock<LLMMetrics>>,
+    response_cache: Arc<Mutex<HashMap<String, CachedResponse>>>,
     /// Configuration
     config: LLMHandlerConfig,
 }
@@ -55,7 +72,6 @@ pub struct LLMHandlerConfig {
     pub default_timeout_seconds: u64,
     pub max_retries: u32,
     pub retry_delay_ms: u64,
-    pub enable_metrics: bool,
 }
 
 impl Default for LLMHandlerConfig {
@@ -67,7 +83,6 @@ impl Default for LLMHandlerConfig {
             default_timeout_seconds: 30,
             max_retries: 3,
             retry_delay_ms: 1000,
-            enable_metrics: true,
         }
     }
 }
@@ -79,68 +94,114 @@ struct CachedResponse {
     ttl_seconds: u64,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct LLMMetrics {
-    pub total_requests: u64,
-    pub successful_requests: u64,
-    pub failed_requests: u64,
-    pub cache_hits: u64,
-    pub cache_misses: u64,
-    pub total_tokens_used: u64,
-    pub total_cost_usd: f64,
-    pub average_response_time_ms: f64,
-    pub provider_usage: HashMap<String, u64>,
-}
+// Singleton instance (matches Symphony SDK pattern)
+static LLM_HANDLER_INSTANCE: OnceLock<Arc<LLMHandler>> = OnceLock::new();
 
 impl LLMHandler {
-    pub fn new(config: LLMHandlerConfig) -> Self {
+    /// Get singleton instance (matches Symphony SDK pattern)
+    pub fn get_instance() -> Arc<LLMHandler> {
+        LLM_HANDLER_INSTANCE.get_or_init(|| {
+            let handler = Arc::new(LLMHandler::new());
+            
+            // Initialize default providers in background (matches Symphony pattern)
+            let handler_clone = Arc::clone(&handler);
+            tokio::spawn(async move {
+                if let Err(e) = handler_clone.initialize_default_providers().await {
+                    eprintln!("Failed to initialize default LLM providers: {:?}", e);
+                }
+            });
+            
+            handler
+        }).clone()
+    }
+
+    /// Create new handler instance (private, use get_instance)
+    fn new() -> Self {
         Self {
-            providers: Arc::new(RwLock::new(HashMap::new())),
-            default_provider: Arc::new(RwLock::new(None)),
-            response_cache: Arc::new(RwLock::new(HashMap::new())),
-            metrics: Arc::new(RwLock::new(LLMMetrics::default())),
-            config,
+            providers: Arc::new(Mutex::new(HashMap::new())),
+            default_provider: Arc::new(Mutex::new(None)),
+            response_cache: Arc::new(Mutex::new(HashMap::new())),
+            config: LLMHandlerConfig::default(),
         }
     }
 
-    /// Register a new LLM provider
-    pub async fn register_provider(&self, provider: Box<dyn LLMProvider>) -> AriaResult<()> {
-        let provider_name = provider.name().to_string();
+    /// Initialize default providers based on environment (matches Symphony pattern)
+    async fn initialize_default_providers(&self) -> AriaResult<()> {
+        // Initialize OpenAI if API key is provided (exactly like Symphony SDK)
+        if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
+            if !api_key.is_empty() {
+                let config = LLMConfig {
+                    provider: "openai".to_string(),
+                    api_key: api_key.clone(),
+                    model: Some("gpt-3.5-turbo".to_string()),
+                    temperature: Some(0.7),
+                    max_tokens: Some(4000),
+                    timeout: Some(30),
+                };
+
+                self.register_provider(config).await?;
+                
+                // Set OpenAI as default provider (matches Symphony pattern)
+                {
+                    let mut default_provider = self.default_provider.lock().unwrap();
+                    *default_provider = Some("openai".to_string());
+                }
+                
+                return Ok(());
+            }
+        }
+
+        Err(AriaError::new(
+            ErrorCode::LLMApiError,
+            ErrorCategory::LLM,
+            ErrorSeverity::High,
+            "OpenAI API key is required in environment configuration"
+        ))
+    }
+
+    /// Register a provider (matches Symphony SDK pattern)
+    pub async fn register_provider(&self, config: LLMConfig) -> AriaResult<()> {
+        let provider_name = config.provider.to_lowercase();
         
+        // Only OpenAI supported for now (like Symphony initially)
+        if provider_name != "openai" {
+            return Err(AriaError::new(
+                ErrorCode::LLMProviderNotFound,
+                ErrorCategory::LLM,
+                ErrorSeverity::High,
+                &format!("Provider {} not supported for registration yet", provider_name)
+            ));
+        }
+
+        // Create OpenAI provider
+        let provider = providers::openai::OpenAIProvider::new(config.api_key.clone())
+            .with_model(config.model.unwrap_or_else(|| "gpt-3.5-turbo".to_string()))
+            .with_timeout(config.timeout.unwrap_or(30));
+
         // Initialize the provider
         provider.initialize().await?;
         
         // Register the provider
         {
-            let mut providers = self.providers.write().await;
-            providers.insert(provider_name.clone(), provider);
+            let mut providers = self.providers.lock().unwrap();
+            providers.insert(provider_name.clone(), Box::new(provider));
         }
         
         // Set as default if no default exists
         {
-            let mut default_provider = self.default_provider.write().await;
+            let mut default_provider = self.default_provider.lock().unwrap();
             if default_provider.is_none() {
-                *default_provider = Some(provider_name.clone());
+                *default_provider = Some(provider_name);
             }
         }
         
         Ok(())
     }
 
-    /// Complete an LLM request with intelligent caching and fallbacks
-    pub async fn complete(&self, request: LLMRequest) -> AriaResult<LLMResponse> {
-        let start_time = Instant::now();
-        
-        // Check cache first
-        if self.config.cache_enabled {
-            if let Some(cached) = self.get_cached_response(&request).await {
-                self.update_metrics_cache_hit().await;
-                return Ok(cached);
-            }
-        }
-        
-        // Get provider
-        let provider_name = request.provider.clone()
+    /// Get provider (matches Symphony pattern)
+    pub fn get_provider(&self, name: Option<&str>) -> AriaResult<Box<dyn LLMProvider>> {
+        let provider_name = name
+            .map(|s| s.to_lowercase())
             .or_else(|| self.get_default_provider_sync())
             .ok_or_else(|| AriaError::new(
                 ErrorCode::LLMProviderNotFound,
@@ -149,231 +210,154 @@ impl LLMHandler {
                 "No provider specified and no default provider available"
             ))?;
 
-        let provider = {
-            let providers = self.providers.read().await;
-            providers.get(&provider_name)
-                .ok_or_else(|| AriaError::new(
-                    ErrorCode::LLMProviderNotFound,
-                    ErrorCategory::LLM,
-                    ErrorSeverity::High,
-                    &format!("Provider '{}' not found", provider_name)
-                ))?
-                .clone_box()
-        };
+        let providers = self.providers.lock().unwrap();
+        providers.get(&provider_name)
+            .ok_or_else(|| AriaError::new(
+                ErrorCode::LLMProviderNotFound,
+                ErrorCategory::LLM,
+                ErrorSeverity::High,
+                &format!("Provider '{}' not found", provider_name)
+            ))
+            .map(|p| p.clone_box())
+    }
 
-        // Execute request with retries
-        let mut last_error = None;
-        for attempt in 0..=self.config.max_retries {
-            match provider.complete(request.clone()).await {
-                Ok(response) => {
-                    // Cache successful response
-                    if self.config.cache_enabled {
-                        self.cache_response(&request, &response).await;
+    /// Complete an LLM request (matches Symphony pattern)
+    pub async fn complete(&self, request: types::LLMRequest) -> AriaResult<types::LLMResponse> {
+        println!("🔍 DEBUG: LLMHandler::complete called");
+        println!("🔍 DEBUG: Request provider: {:?}", request.provider);
+        println!("🔍 DEBUG: Request messages count: {}", request.messages.len());
+        println!("🔍 DEBUG: Request config: {:?}", request.config);
+        
+        let target_provider_name = request.provider.clone()
+            .or_else(|| self.get_default_provider_sync());
+
+        println!("🔍 DEBUG: Target provider name: {:?}", target_provider_name);
+
+        if target_provider_name.is_none() {
+            println!("🔍 DEBUG: No provider available - returning error");
+            return Err(AriaError::new(
+                ErrorCode::LLMProviderNotFound,
+                ErrorCategory::LLM,
+                ErrorSeverity::High,
+                "No provider specified in request and no default provider set"
+            ));
+        }
+
+        let provider_name = target_provider_name.unwrap();
+        println!("🔍 DEBUG: Using provider: {}", provider_name);
+        
+        // On-demand provider initialization (matches Symphony pattern)
+        if !self.has_provider(&provider_name) {
+            println!("🔍 DEBUG: Provider {} not found, attempting to register", provider_name);
+            if provider_name == "openai" {
+                if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
+                    if !api_key.is_empty() {
+                        println!("🔍 DEBUG: Found OpenAI API key, registering provider");
+                        let config = LLMConfig {
+                            provider: "openai".to_string(),
+                            api_key,
+                            model: request.config.model.clone(),
+                            temperature: Some(request.config.temperature),
+                            max_tokens: Some(request.config.max_tokens),
+                            timeout: Some(30),
+                        };
+                        self.register_provider(config).await?;
+                        println!("🔍 DEBUG: OpenAI provider registered successfully");
+                    } else {
+                        println!("🔍 DEBUG: OpenAI API key is empty");
                     }
-                    
-                    // Update metrics
-                    self.update_metrics_success(&provider_name, &response, start_time.elapsed()).await;
-                    
-                    return Ok(response);
-                },
-                Err(error) => {
-                    last_error = Some(error);
-                    
-                    // Don't retry on certain errors
-                    if let Some(ref err) = last_error {
-                        if matches!(err.code, ErrorCode::LLMInvalidResponse | ErrorCode::LLMTokenLimitExceeded) {
-                            break;
-                        }
-                    }
-                    
-                    // Wait before retry
-                    if attempt < self.config.max_retries {
-                        tokio::time::sleep(Duration::from_millis(
-                            self.config.retry_delay_ms * (attempt + 1) as u64
-                        )).await;
-                    }
+                } else {
+                    println!("🔍 DEBUG: OpenAI API key not found in environment");
                 }
             }
+        } else {
+            println!("🔍 DEBUG: Provider {} already exists", provider_name);
         }
+
+        println!("🔍 DEBUG: Getting provider instance");
+        let provider = self.get_provider(Some(&provider_name))?;
         
-        // Update failure metrics
-        self.update_metrics_failure(&provider_name).await;
+        println!("🔍 DEBUG: Calling provider.complete()");
+        let result = provider.complete(request).await;
         
-        Err(last_error.unwrap_or_else(|| AriaError::new(
-            ErrorCode::LLMApiError,
-            ErrorCategory::LLM,
-            ErrorSeverity::High,
-            "LLM request failed after all retries"
-        )))
-    }
-
-    /// Stream an LLM request
-    pub async fn complete_stream(&self, request: LLMRequest) -> AriaResult<Box<dyn futures::Stream<Item = AriaResult<LLMResponse>> + Unpin + Send>> {
-        let provider_name = request.provider.clone()
-            .or_else(|| self.get_default_provider_sync())
-            .ok_or_else(|| AriaError::new(
-                ErrorCode::LLMProviderNotFound,
-                ErrorCategory::LLM,
-                ErrorSeverity::High,
-                "No provider specified and no default provider available"
-            ))?;
-
-        let provider = {
-            let providers = self.providers.read().await;
-            providers.get(&provider_name)
-                .ok_or_else(|| AriaError::new(
-                    ErrorCode::LLMProviderNotFound,
-                    ErrorCategory::LLM,
-                    ErrorSeverity::High,
-                    &format!("Provider '{}' not found", provider_name)
-                ))?
-                .clone_box()
-        };
-
-        provider.complete_stream(request).await
-    }
-
-    /// Get cached response if available and not expired
-    async fn get_cached_response(&self, request: &LLMRequest) -> Option<LLMResponse> {
-        let cache_key = self.generate_cache_key(request);
-        let cache = self.response_cache.read().await;
-        
-        if let Some(cached) = cache.get(&cache_key) {
-            let now = std::time::SystemTime::now();
-            let elapsed = now.duration_since(cached.cached_at).ok()?;
-            
-            if elapsed.as_secs() < cached.ttl_seconds {
-                return Some(cached.response.clone());
+        match &result {
+            Ok(response) => {
+                println!("🔍 DEBUG: Provider returned success!");
+                println!("🔍 DEBUG: Response content length: {}", response.content.len());
+                println!("🔍 DEBUG: Response content (first 200 chars): {}", 
+                    response.content.chars().take(200).collect::<String>());
+                println!("🔍 DEBUG: Response model: {}", response.model);
+            }
+            Err(e) => {
+                println!("🔍 DEBUG: Provider returned error: {:?}", e);
             }
         }
         
+        result
+    }
+
+    /// Simple inference method (matches Symphony pattern)
+    pub async fn inference(&self, prompt: &str, llm_config: Option<LLMRequestConfig>) -> AriaResult<String> {
+        let config = if let Some(req_config) = llm_config {
+            types::LLMConfig {
+                model: req_config.model,
+                temperature: req_config.temperature.unwrap_or(0.7),
+                max_tokens: req_config.max_tokens.unwrap_or(2048),
+                top_p: None,
+                frequency_penalty: None,
+                presence_penalty: None,
+            }
+        } else {
+            types::LLMConfig::default()
+        };
+
+        let request = types::LLMRequest {
+            messages: vec![types::LLMMessage {
+                role: "user".to_string(),
+                content: prompt.to_string(),
+                tool_call_id: None,
+                tool_calls: None,
+            }],
+            config,
+            provider: None,
+            tools: None,
+            tool_choice: None,
+            stream: None,
+        };
+        
+        let response = self.complete(request).await?;
+        Ok(response.content)
+    }
+
+    /// Check if provider exists
+    fn has_provider(&self, name: &str) -> bool {
+        let providers = self.providers.lock().unwrap();
+        providers.contains_key(name)
+    }
+
+    /// Get default provider name (sync version, matches Symphony pattern)
+    fn get_default_provider_sync(&self) -> Option<String> {
+        // First check if we have a set default
+        {
+            let default_provider = self.default_provider.lock().unwrap();
+            if let Some(ref provider) = *default_provider {
+                return Some(provider.clone());
+            }
+        }
+        
+        // Fallback: if we have OpenAI API key, return "openai" as default
+        if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
+            if !api_key.is_empty() {
+                return Some("openai".to_string());
+            }
+        }
         None
     }
 
-    /// Cache a successful response
-    async fn cache_response(&self, request: &LLMRequest, response: &LLMResponse) {
-        if !self.config.cache_enabled {
-            return;
-        }
-        
-        let cache_key = self.generate_cache_key(request);
-        let cached_response = CachedResponse {
-            response: response.clone(),
-            cached_at: std::time::SystemTime::now(),
-            ttl_seconds: self.config.cache_ttl_seconds,
-        };
-        
-        let mut cache = self.response_cache.write().await;
-        
-        // Implement LRU eviction if cache is full
-        if cache.len() >= self.config.max_cache_size {
-            // Remove oldest entry
-            if let Some(oldest_key) = cache.keys().next().cloned() {
-                cache.remove(&oldest_key);
-            }
-        }
-        
-        cache.insert(cache_key, cached_response);
-    }
-
-    /// Generate cache key for request
-    fn generate_cache_key(&self, request: &LLMRequest) -> String {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        
-        let mut hasher = DefaultHasher::new();
-        
-        // Hash the essential parts of the request (skip f32 fields for now)
-        request.messages.hash(&mut hasher);
-        if let Some(ref model) = request.config.model {
-            model.hash(&mut hasher);
-        }
-        request.config.max_tokens.hash(&mut hasher);
-        
-        format!("llm_cache_{:x}", hasher.finish())
-    }
-
-    /// Update metrics for cache hit
-    async fn update_metrics_cache_hit(&self) {
-        if !self.config.enable_metrics {
-            return;
-        }
-        
-        let mut metrics = self.metrics.write().await;
-        metrics.cache_hits += 1;
-    }
-
-    /// Update metrics for successful request
-    async fn update_metrics_success(&self, provider_name: &str, response: &LLMResponse, duration: Duration) {
-        if !self.config.enable_metrics {
-            return;
-        }
-        
-        let mut metrics = self.metrics.write().await;
-        metrics.total_requests += 1;
-        metrics.successful_requests += 1;
-        metrics.cache_misses += 1;
-        
-        if let Some(usage) = &response.token_usage {
-            metrics.total_tokens_used += usage.total as u64;
-        }
-        
-        // Update average response time
-        let new_avg = (metrics.average_response_time_ms * (metrics.successful_requests - 1) as f64 + duration.as_millis() as f64) / metrics.successful_requests as f64;
-        metrics.average_response_time_ms = new_avg;
-        
-        // Update provider usage
-        *metrics.provider_usage.entry(provider_name.to_string()).or_insert(0) += 1;
-    }
-
-    /// Update metrics for failed request
-    async fn update_metrics_failure(&self, provider_name: &str) {
-        if !self.config.enable_metrics {
-            return;
-        }
-        
-        let mut metrics = self.metrics.write().await;
-        metrics.total_requests += 1;
-        metrics.failed_requests += 1;
-        metrics.cache_misses += 1;
-        
-        // Update provider usage (even for failures)
-        *metrics.provider_usage.entry(provider_name.to_string()).or_insert(0) += 1;
-    }
-
-    /// Get default provider name (sync version for internal use)
-    fn get_default_provider_sync(&self) -> Option<String> {
-        // This is a simplified sync version - in production you'd want to handle this better
-        None // TODO: Implement proper sync access or restructure
-    }
-
-    /// Get current metrics
-    pub async fn get_metrics(&self) -> LLMMetrics {
-        self.metrics.read().await.clone()
-    }
-
-    /// Clear cache
-    pub async fn clear_cache(&self) {
-        let mut cache = self.response_cache.write().await;
-        cache.clear();
-    }
-
     /// Get available providers
-    pub async fn get_available_providers(&self) -> Vec<String> {
-        let providers = self.providers.read().await;
+    pub fn get_available_providers(&self) -> Vec<String> {
+        let providers = self.providers.lock().unwrap();
         providers.keys().cloned().collect()
-    }
-}
-
-impl Clone for LLMHandler {
-    fn clone(&self) -> Self {
-        Self {
-            providers: Arc::clone(&self.providers),
-            default_provider: Arc::clone(&self.default_provider),
-            response_cache: Arc::clone(&self.response_cache),
-            metrics: Arc::clone(&self.metrics),
-            config: self.config.clone(),
-        }
     }
 }
 
@@ -393,14 +377,32 @@ pub trait LLMProvider: Send + Sync {
     async fn initialize(&self) -> AriaResult<()>;
     
     /// Complete a request
-    async fn complete(&self, request: LLMRequest) -> AriaResult<LLMResponse>;
+    async fn complete(&self, request: types::LLMRequest) -> AriaResult<types::LLMResponse>;
     
-    /// Stream a request
-    async fn complete_stream(&self, request: LLMRequest) -> AriaResult<Box<dyn futures::Stream<Item = AriaResult<LLMResponse>> + Unpin + Send>>;
+    /// Stream a request (TODO: implement)
+    async fn complete_stream(&self, _request: types::LLMRequest) -> AriaResult<Box<dyn futures::Stream<Item = AriaResult<types::LLMResponse>> + Unpin + Send>> {
+        Err(AriaError::new(
+            ErrorCode::LLMApiError,
+            ErrorCategory::LLM,
+            ErrorSeverity::Medium,
+            "Streaming not yet implemented"
+        ))
+    }
     
     /// Health check
     async fn health_check(&self) -> AriaResult<bool>;
     
     /// Clone the provider (for Arc storage)
     fn clone_box(&self) -> Box<dyn LLMProvider>;
+}
+
+impl Default for LLMRequestConfig {
+    fn default() -> Self {
+        Self {
+            model: None,
+            temperature: None,
+            max_tokens: None,
+            timeout: None,
+        }
+    }
 }

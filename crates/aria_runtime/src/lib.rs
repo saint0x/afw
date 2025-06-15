@@ -79,12 +79,11 @@ pub async fn create_aria_runtime(_config: RuntimeConfiguration) -> AriaResult<Ar
 
 impl AriaEngines {
     pub fn new() -> Self {
-        // Create LLM handler with default configuration
-        let llm_config = crate::engines::llm::LLMHandlerConfig::default();
-        let llm_handler = LLMHandler::new(llm_config);
+        // Get singleton LLM handler (matches Symphony SDK pattern)
+        let llm_handler = LLMHandler::get_instance();
 
         // Create tool registry with LLM handler
-        let tool_registry = ToolRegistry::new(Arc::new(llm_handler.clone()));
+        let tool_registry = ToolRegistry::new(Arc::clone(&llm_handler));
 
         // Create system prompt service
         let system_prompt = SystemPromptService::new();
@@ -92,7 +91,7 @@ impl AriaEngines {
         // Create all engines with concrete types
         let execution = ExecutionEngine::new(
             Arc::new(tool_registry.clone()) as Arc<dyn crate::engines::tool_registry::ToolRegistryInterface>,
-            Arc::new(llm_handler.clone()),
+            Arc::clone(&llm_handler),
             None, // No container manager for now
         );
         
@@ -101,7 +100,7 @@ impl AriaEngines {
         );
         
         let conversation = ConversationEngine::new(
-            Some(Box::new(crate::engines::LLMHandlerWrapper::new(llm_handler.clone())))
+            Some(Box::new(crate::engines::LLMHandlerWrapper::new(Arc::clone(&llm_handler))))
         );
         
         let reflection = ReflectionEngine::new(

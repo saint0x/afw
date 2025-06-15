@@ -50,96 +50,44 @@ impl AriaRuntime {
         task: &str,
         agent_config: AgentConfig,
     ) -> AriaResult<RuntimeResult> {
-        let status = self.status.read().await;
-        if *status != RuntimeStatus::Ready {
-            return Err(AriaError::new(
-                ErrorCode::SystemNotReady,
-                ErrorCategory::System,
-                ErrorSeverity::High,
-                &format!("Runtime not ready. Status: {:?}", status),
-            ));
+        println!("🔍 DEBUG: AriaRuntime::execute called");
+        println!("🔍 DEBUG: Task: {}", task);
+        println!("🔍 DEBUG: Agent: {}", agent_config.name);
+        
+        let session_id = Uuid::new_v4();
+        println!("🔍 DEBUG: Created session ID: {}", session_id);
+        
+        let mut context = self.create_runtime_context(agent_config, session_id);
+        println!("🔍 DEBUG: Created runtime context");
+        
+        // Track session
+        {
+            let mut sessions = self.active_sessions.write().await;
+            sessions.insert(session_id, context.clone());
+            println!("🔍 DEBUG: Added session to active sessions");
         }
 
-        let session_id = DeepUuid(Uuid::new_v4());
-        let mut context = crate::types::RuntimeContext::default();
-        context.session_id = session_id;
-        context.agent_config = agent_config;
+        let start_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
 
-        // Use concrete engines directly (avoid trait object issues)
-        let analysis = self.engines.planning.analyze_task(task, &context).await?;
-        let plan = if analysis.requires_planning {
-            Some(
-                self.engines.planning
-                    .create_execution_plan(task, &context.agent_config, &context)
-                    .await?,
-            )
-        } else {
-            None
-        };
+        println!("🔍 DEBUG: Calling execute_with_context...");
+        let result = self.execute_with_context(task, &mut context).await;
+        println!("🔍 DEBUG: execute_with_context returned");
 
-        let mut execution_history: Vec<ExecutionStep> = Vec::new();
-
-        if let Some(ref p) = plan {
-            for step in &p.steps {
-                let step_result = self.engines.execution.execute_step(step, &context).await?;
-                context.execution_history.push(step_result.clone());
-                execution_history.push(step_result);
-            }
-        } else {
-            let result = self.engines.execution
-                .execute(task, &context.agent_config, &context)
-                .await?;
-            let step = ExecutionStep {
-                step_id: DeepUuid(Uuid::new_v4()),
-                description: task.to_string(),
-                start_time: 0,
-                end_time: 0,
-                duration: result.execution_time_ms,
-                success: result.success,
-                step_type: crate::types::StepType::ToolCall,
-                tool_used: None,
-                agent_used: Some(context.agent_config.name.clone()),
-                container_used: None,
-                parameters: HashMap::new(),
-                result: result.result,
-                error: result.error,
-                reflection: None,
-                summary: "Single step execution".to_string(),
-                resource_usage: result.resource_usage,
-            };
-            execution_history.push(step);
+        // Clean up session
+        {
+            let mut sessions = self.active_sessions.write().await;
+            sessions.remove(&session_id);
+            println!("🔍 DEBUG: Removed session from active sessions");
         }
 
-        Ok(RuntimeResult {
-            success: execution_history.iter().all(|s| s.success),
-            mode: RuntimeExecutionMode::EnhancedPlanning,
-            conversation: Some(ConversationJSON {
-                id: session_id,
-                original_task: task.to_string(),
-                turns: vec![],
-                final_response: "".to_string(),
-                reasoning_chain: vec![],
-                duration: 0,
-                state: crate::types::ConversationState::Completed,
-            }),
-            execution_details: ExecutionDetails {
-                mode: RuntimeExecutionMode::EnhancedPlanning,
-                step_results: execution_history,
-                participating_agents: vec![context.agent_config.name.clone()],
-                containers_used: vec![],
-                total_steps: plan.as_ref().map_or(1, |p| p.steps.len() as u32),
-                completed_steps: context.execution_history.len() as u32,
-                failed_steps: 0,
-                skipped_steps: 0,
-                adaptations: vec![],
-                insights: vec![],
-                resource_utilization: Default::default(),
-            },
-            plan,
-            reflections: vec![],
-            error: None,
-            metrics: Default::default(),
-        })
+        // Update metrics
+        self.update_metrics(start_time, &result).await;
+        println!("🔍 DEBUG: Updated metrics");
+
+        result
     }
 
     /// Initialize the runtime and all engines
@@ -327,27 +275,40 @@ impl AriaRuntime {
         context: &mut RuntimeContext,
         conversation: &mut ConversationJSON,
     ) -> AriaResult<InternalExecutionResult> {
+        println!("🔍 DEBUG: Starting execute_single_shot_task");
+        println!("🔍 DEBUG: Task: {}", task);
+        println!("🔍 DEBUG: Agent: {}", context.agent_config.name);
+        
         // Add task to conversation
         self.add_conversation_turn(conversation, ConversationRole::Assistant, 
             &format!("Executing task: {}", task), None);
 
+        println!("🔍 DEBUG: Calling execution engine...");
         // Execute using execution engine
         let execution_result = self.engines.execution
             .execute(task, &context.agent_config, context)
             .await?;
 
+        println!("🔍 DEBUG: Execution engine returned!");
+        println!("🔍 DEBUG: Success: {}", execution_result.success);
+        println!("🔍 DEBUG: Result: {:?}", execution_result.result);
+        println!("🔍 DEBUG: Error: {:?}", execution_result.error);
+
         // Create execution step
         let step_id = crate::deep_size::DeepUuid(Uuid::new_v4());
+        let start_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+        let end_time = start_time + 1; // Minimal duration for now
+        
         let execution_step = ExecutionStep {
             step_id,
             description: task.to_string(),
-            start_time: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64,
-            end_time: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64,
-            duration: 0, // TODO: Calculate actual duration
+            start_time,
+            end_time,
+            duration: end_time - start_time,
             success: execution_result.success,
             step_type: StepType::ToolCall, // Default for single-shot
             tool_used: None, // Will be populated by execution engine
-            agent_used: None,
+            agent_used: Some(context.agent_config.name.clone()),
             container_used: None,
             parameters: std::collections::HashMap::new(),
             result: execution_result.result.clone(),
@@ -358,14 +319,23 @@ impl AriaRuntime {
             resource_usage: execution_result.resource_usage.clone(),
         };
 
+        println!("🔍 DEBUG: Created ExecutionStep with ID: {:?}", execution_step.step_id);
+        println!("🔍 DEBUG: ExecutionStep success: {}", execution_step.success);
+
         // Record the step
+        println!("🔍 DEBUG: Recording step in context manager...");
         self.engines.context_manager
             .record_step(execution_step.clone())
             .await?;
 
+        println!("🔍 DEBUG: Adding step to execution history...");
         context.execution_history.push(execution_step.clone());
         context.current_step = 1;
         context.total_steps = 1;
+        
+        println!("🔍 DEBUG: Updated context - current_step: {}, total_steps: {}", 
+            context.current_step, context.total_steps);
+        println!("🔍 DEBUG: Execution history length: {}", context.execution_history.len());
 
         // Update conversation with result
         if execution_result.success {
@@ -375,8 +345,14 @@ impl AriaRuntime {
                 .and_then(|r| r.as_str())
                 .unwrap_or("Task completed successfully");
             
+            println!("🔍 DEBUG: Extracted response content: {}", result_content);
+            
             self.add_conversation_turn(conversation, ConversationRole::Assistant, 
                 &format!("Task completed: {}", result_content), None);
+            
+            // CRITICAL FIX: Set the final_response field for success detection
+            conversation.final_response = result_content.to_string();
+            conversation.state = ConversationState::Completed;
             
             context.status = ExecutionStatus::Succeeded;
         } else {
@@ -384,13 +360,22 @@ impl AriaRuntime {
                 .as_deref()
                 .unwrap_or("Unknown error");
                 
+            println!("🔍 DEBUG: Task failed with error: {}", error_msg);
+                
             self.add_conversation_turn(conversation, ConversationRole::Assistant, 
                 &format!("Task failed: {}", error_msg), None);
+            
+            // Set final_response even for failures (for debugging)
+            conversation.final_response = format!("ERROR: {}", error_msg);
+            conversation.state = ConversationState::Error;
             
             context.status = ExecutionStatus::Failed;
         }
 
         self.engines.context_manager.update_status(context.status.clone()).await?;
+
+        println!("🔍 DEBUG: execute_single_shot_task completed");
+        println!("🔍 DEBUG: Final success: {}", execution_result.success);
 
         Ok(InternalExecutionResult {
             success: execution_result.success,
@@ -499,10 +484,59 @@ impl AriaRuntime {
         start_time: u64,
         error: Option<String>,
     ) -> RuntimeResult {
+        println!("🔍 DEBUG: Constructing final result");
+        println!("🔍 DEBUG: Success: {}", success);
+        println!("🔍 DEBUG: Mode: {:?}", mode);
+        println!("🔍 DEBUG: Context current_step: {}", context.current_step);
+        println!("🔍 DEBUG: Context total_steps: {}", context.total_steps);
+        println!("🔍 DEBUG: Context execution_history length: {}", context.execution_history.len());
+        
+        // Debug execution history
+        for (i, step) in context.execution_history.iter().enumerate() {
+            println!("🔍 DEBUG: Step {}: {} - Success: {}", i, step.description, step.success);
+            if let Some(result) = &step.result {
+                if let Some(response) = result.get("response") {
+                    println!("🔍 DEBUG: Step {} response: {}", i, response);
+                } else {
+                    println!("🔍 DEBUG: Step {} has result but no 'response' field: {:?}", i, result);
+                }
+            } else {
+                println!("🔍 DEBUG: Step {} has no result", i);
+            }
+        }
+        
         let end_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_millis() as u64;
+
+        let metrics = RuntimeMetrics {
+            total_duration: end_time - start_time,
+            start_time,
+            end_time,
+            step_count: context.execution_history.len() as u32,
+            tool_calls: context.execution_history.iter().filter(|s| matches!(s.step_type, StepType::ToolCall)).count() as u32,
+            container_calls: 0, // TODO: Track container calls
+            agent_calls: 0, // TODO: Track agent calls
+            token_usage: None, // TODO: Track token usage
+            reflection_count: context.reflections.len() as u32,
+            adaptation_count: 0, // TODO: Track adaptations
+            memory_usage: MemoryUsage {
+                current_size: context.memory_size,
+                max_size: context.max_memory_size,
+                utilization_percent: if context.max_memory_size > 0 {
+                    (context.memory_size as f64 / context.max_memory_size as f64) * 100.0
+                } else {
+                    0.0
+                },
+                item_count: context.execution_history.len() as u32,
+            },
+        };
+        
+        println!("🔍 DEBUG: Computed metrics:");
+        println!("🔍 DEBUG: - total_duration: {}", metrics.total_duration);
+        println!("🔍 DEBUG: - step_count: {}", metrics.step_count);
+        println!("🔍 DEBUG: - tool_calls: {}", metrics.tool_calls);
 
         RuntimeResult {
             success,
@@ -524,28 +558,7 @@ impl AriaRuntime {
             plan: context.current_plan.clone(),
             reflections: context.reflections.clone(),
             error,
-            metrics: RuntimeMetrics {
-                total_duration: end_time - start_time,
-                start_time,
-                end_time,
-                step_count: context.execution_history.len() as u32,
-                tool_calls: context.execution_history.iter().filter(|s| matches!(s.step_type, StepType::ToolCall)).count() as u32,
-                container_calls: 0, // TODO: Track container calls
-                agent_calls: 0, // TODO: Track agent calls
-                token_usage: None, // TODO: Track token usage
-                reflection_count: context.reflections.len() as u32,
-                adaptation_count: 0, // TODO: Track adaptations
-                memory_usage: MemoryUsage {
-                    current_size: context.memory_size,
-                    max_size: context.max_memory_size,
-                    utilization_percent: if context.max_memory_size > 0 {
-                        (context.memory_size as f64 / context.max_memory_size as f64) * 100.0
-                    } else {
-                        0.0
-                    },
-                    item_count: context.execution_history.len() as u32,
-                },
-            },
+            metrics,
         }
     }
 

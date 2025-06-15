@@ -1,0 +1,1737 @@
+# Jockey Image
+
+Generated: 06-15-2025 at 17:26:22
+
+## Repository Structure
+
+```
+standard
+│   ├── tools
+│   │   ├── ponder.ts
+│   │   ├── create-plan.ts
+│       └── web-search.ts
+│   ├── index.ts
+    └── registry.ts
+```
+
+## File: /Users/deepsaint/Desktop/symphony-sdk/src/tools/standard/tools/web-search.ts
+
+```ts
+import { ToolConfig, ToolResult } from '../../../types/sdk';
+import fetch from 'node-fetch';
+import { getCache } from '../../../cache';
+import * as dotenv from 'dotenv';
+import path from 'path';
+
+// Load environment variables
+dotenv.config({ path: path.resolve(__dirname, '../../../../src/.env') });
+
+export const webSearchTool: ToolConfig = {
+    name: 'webSearchTool',
+    description: 'Search the web for information',
+    type: 'web',
+    nlp: 'search the web for * OR find information about * OR look up * on the internet',
+    config: {
+        inputs: ['query', 'num_results'],
+        outputs: ['results', 'summary'],
+    },
+    handler: async (params: any): Promise<ToolResult<any>> => {
+        const { query, type = 'search' } = params;
+        if (!query) {
+            return {
+                success: false,
+                error: 'Query parameter is required'
+            };
+        }
+
+        const apiKey = process.env.SERPER_API_KEY;
+        if (!apiKey) {
+            return {
+                success: false,
+                error: 'SERPER_API_KEY environment variable is not set'
+            };
+        }
+
+        try {
+            // Use a cache to avoid repeated requests
+            const cache = getCache();
+            const cacheKey = `websearch:${type}:${query}`;
+            const cached = await cache.get(cacheKey);
+            if (cached) {
+                console.log('[WEBSEARCH] Using cached results');
+                return {
+                    success: true,
+                    result: cached
+                };
+            }
+
+            console.log('[WEBSEARCH] Making API request with Serper API key');
+            // Make the actual web request to Serper API
+            const response = await fetch('https://google.serper.dev/search', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-API-KEY': apiKey
+                },
+                body: JSON.stringify({
+                    q: query,
+                    type: type
+                })
+            });
+
+            if (!response.ok) {
+                return {
+                    success: false,
+                    error: `Search request failed with status ${response.status}: ${response.statusText}`
+                };
+            }
+
+            const data = await response.json();
+            await cache.set(cacheKey, data);
+
+            return {
+                success: true,
+                result: data
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : String(error)
+            };
+        }
+    }
+}; 
+```
+
+## File: /Users/deepsaint/Desktop/symphony-sdk/src/tools/standard/tools/write-file.ts
+
+```ts
+import { ToolConfig, ToolResult } from '../../../types/sdk';
+import fs from 'fs/promises';
+import path from 'path';
+import { ValidationError } from '../../../errors/index';
+
+export const writeFileTool: ToolConfig = {
+    name: 'writeFileTool',
+    description: 'Write content to a file, creating directories if needed',
+    type: 'filesystem',
+    config: {
+        inputs: ['path', 'content', 'encoding'],
+        outputs: ['success', 'error', 'path', 'size'],
+    },
+    handler: async (params: any): Promise<ToolResult<any>> => {
+        try {
+            const { path: legacyPath, filePath: newPath, content, encoding = 'utf-8' } = params;
+            const filePath = newPath || legacyPath;
+            
+            if (!filePath || content === undefined) {
+                throw new ValidationError(
+                    'Path (or filePath) and content parameters are required',
+                    { provided: params, required: ['path', 'content'] },
+                    { component: 'WriteFileTool', operation: 'execute' }
+                );
+            }
+
+            // Ensure directory exists
+            const dirPath = path.dirname(filePath);
+            await fs.mkdir(dirPath, { recursive: true });
+
+            // Write file
+            await fs.writeFile(filePath, content, encoding);
+            const stats = await fs.stat(filePath);
+
+            console.log(`[WRITEFILE] Successfully wrote ${stats.size} bytes to ${filePath}`);
+
+            return {
+                success: true,
+                result: {
+                    path: filePath,
+                    size: stats.size,
+                    encoding,
+                    message: `File written successfully to ${filePath}`
+                }
+            };
+        } catch (error) {
+            console.error(`[WRITEFILE] Failed to write file:`, error);
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : String(error)
+            };
+        }
+    }
+}; 
+```
+
+## File: /Users/deepsaint/Desktop/symphony-sdk/src/tools/standard/tools/read-file.ts
+
+```ts
+import { ToolConfig, ToolResult } from '../../../types/sdk';
+import fs from 'fs/promises';
+import { ValidationError } from '../../../errors/index';
+
+export const readFileTool: ToolConfig = {
+    name: 'readFileTool',
+    description: 'Read content from a file',
+    type: 'filesystem',
+    nlp: 'read file * OR read the contents of * OR open file * OR get file contents from *',
+    config: {
+        inputs: ['path'],
+        outputs: ['content', 'metadata'],
+    },
+    handler: async (params: any): Promise<ToolResult<any>> => {
+        try {
+            const { path: legacyPath, filePath: newPath } = params;
+            const filePath = newPath || legacyPath;
+            
+            if (!filePath) {
+                throw new ValidationError(
+                    'Path (or filePath) parameter is required',
+                    { provided: params, required: ['path'] },
+                    { component: 'ReadFileTool', operation: 'execute' }
+                );
+            }
+
+            const content = await fs.readFile(filePath, 'utf-8');
+            const stats = await fs.stat(filePath);
+
+            return {
+                success: true,
+                result: {
+                    content,
+                    metadata: {
+                        format: params.format || filePath.split('.').pop()?.toLowerCase() || '',
+                        size: stats.size,
+                        path: filePath,
+                        type: 'file'
+                    }
+                }
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : String(error)
+            };
+        }
+    }
+}; 
+```
+
+## File: /Users/deepsaint/Desktop/symphony-sdk/src/tools/standard/tools/parse-document.ts
+
+```ts
+import { ToolConfig, ToolResult } from '../../../types/sdk';
+import { LLMHandler } from '../../../llm/handler';
+
+export const parseDocumentTool: ToolConfig = {
+    name: 'parseDocumentTool',
+    description: 'Parse document content',
+    type: 'document',
+    config: {
+        inputs: ['content', 'format', 'extractionType'],
+        outputs: ['data', 'text', 'summary', 'keyPoints'],
+    },
+    handler: async (params: any): Promise<ToolResult<any>> => {
+        try {
+            const { 
+                content: rawContent, 
+                fileContent: aliasContent, 
+                format = 'text',
+                extractionType = 'summary' 
+            } = params;
+            const content = rawContent || aliasContent;
+
+            if (content === undefined) {
+                return {
+                    success: false,
+                    error: 'Content (or fileContent) parameter is required'
+                };
+            }
+
+            // Basic metadata extraction
+            const metadata = {
+                format: format,
+                size: content.length,
+                lineCount: content.split('\n').length,
+                wordCount: content.split(/\s+/).length
+            };
+
+            // If content is very short or extraction is disabled, return basic parsing
+            if (content.length < 100 || extractionType === 'none') {
+                return {
+                    success: true,
+                    result: {
+                        content,
+                        metadata,
+                        summary: content.substring(0, 200) + (content.length > 200 ? '...' : ''),
+                        keyPoints: []
+                    }
+                };
+            }
+
+            console.log('[PARSEDOCUMENT] Using LLM to extract key concepts and summary...');
+
+            // Use LLM to intelligently parse and extract key information
+            const llm = LLMHandler.getInstance();
+            const response = await llm.complete({
+                messages: [
+                    {
+                        role: 'system',
+                        content: `You are an expert document analyzer. Extract key concepts, principles, and information from the provided content.
+
+Your task:
+1. Create a clear, concise summary of the main topic
+2. Extract the most important key points, concepts, or principles
+3. Organize information in a way that would be useful for someone who needs to understand or implement the concepts
+
+Focus on actionable information and core principles rather than metadata or peripheral details.`
+                    },
+                    {
+                        role: 'user',
+                        content: `Analyze this content and extract the key information:
+
+${content}
+
+Provide:
+1. A clear summary (2-3 sentences)
+2. A list of key points/principles (bullet points)
+3. Any important details or concepts that would be needed for implementation
+
+Format your response as:
+
+SUMMARY:
+[Your summary here]
+
+KEY POINTS:
+• [Point 1]
+• [Point 2]
+• [Point 3]
+...
+
+DETAILS:
+[Any important implementation details or concepts]`
+                    }
+                ],
+                temperature: 0.3,
+                maxTokens: 1000
+            });
+
+            const analysisText = response.toString();
+            
+            // Parse the LLM response to extract structured data
+            const summaryMatch = analysisText.match(/SUMMARY:\s*(.*?)(?=KEY POINTS:|$)/s);
+            const keyPointsMatch = analysisText.match(/KEY POINTS:\s*(.*?)(?=DETAILS:|$)/s);
+            const detailsMatch = analysisText.match(/DETAILS:\s*(.*?)$/s);
+
+            const summary = summaryMatch ? summaryMatch[1].trim() : 'Summary not available';
+            const keyPointsText = keyPointsMatch ? keyPointsMatch[1].trim() : '';
+            const details = detailsMatch ? detailsMatch[1].trim() : '';
+
+            // Extract key points into array
+            const keyPoints = keyPointsText
+                .split('\n')
+                .map(line => line.replace(/^[•\-\*]\s*/, '').trim())
+                .filter(point => point.length > 0);
+
+            console.log(`[PARSEDOCUMENT] Extracted ${keyPoints.length} key points from ${content.length} characters`);
+
+            return {
+                success: true,
+                result: {
+                    content: summary, // Return the summary as the main content for downstream tools
+                    originalContent: content,
+                    metadata,
+                    summary,
+                    keyPoints,
+                    details,
+                    analysis: analysisText
+                }
+            };
+        } catch (error) {
+            console.error('[PARSEDOCUMENT] Analysis failed, falling back to basic parsing:', error);
+            
+            // Fallback to basic parsing if LLM fails
+            const content = params.content || params.fileContent;
+            return {
+                success: true,
+                result: {
+                    content,
+                    metadata: {
+                        format: params.format || 'text',
+                        size: content.length,
+                        lineCount: content.split('\n').length,
+                        wordCount: content.split(/\s+/).length
+                    },
+                    summary: content.substring(0, 200) + (content.length > 200 ? '...' : ''),
+                    keyPoints: [],
+                    fallback: true
+                }
+            };
+        }
+    }
+}; 
+```
+
+## File: /Users/deepsaint/Desktop/symphony-sdk/src/tools/standard/tools/create-plan.ts
+
+```ts
+import { ToolConfig, ToolResult } from '../../../types/sdk';
+import { LLMHandler } from '../../../llm/handler';
+
+export const createPlanTool: ToolConfig = {
+    name: 'createPlanTool',
+    description: 'Create execution plan using LLM',
+    type: 'planning',
+    config: {
+        inputs: ['goal', 'context', 'constraints'],
+        outputs: ['plan', 'steps'],
+    },
+    handler: async (params: any): Promise<ToolResult<any>> => {
+        try {
+            // Accept both 'objective' and 'query' for flexibility
+            const objective = params.objective || params.query;
+            const { constraints = {}, context = {} } = params;
+            
+            if (!objective) {
+                return {
+                    success: false,
+                    error: 'Objective or query parameter is required'
+                };
+            }
+
+            console.log('[CREATEPLAN] Making real LLM call to generate plan...');
+            
+            // REAL LLM CALL - Generate actual plan using AI
+            const llm = LLMHandler.getInstance();
+            const response = await llm.complete({
+                messages: [
+                    {
+                        role: 'system',
+                        content: `You are a meticulous project planning assistant. Your sole purpose is to create a JSON execution plan.
+Given an objective and a list of available tools, you MUST generate a JSON array of plan steps.
+Each object in the array represents a single, concrete step.
+
+**RULES:**
+1.  **Tool-Centric:** Every single step MUST map directly to one of the provided tools, or be a non-tool step for reasoning or summarization.
+2.  **JSON ONLY:** Your entire output must be a single, raw JSON array. Do not include any text, markdown, or explanations before or after the JSON.
+3.  **Data Flow:** The 'parameters' for a step can and should reference the output of a previous step. Use a placeholder string like '{{step_1_output}}' to indicate this.
+4.  **Complete Parameters:** Include ALL required parameters for each tool. For writeCode, include 'language' and 'filePath' when saving code to files.
+5.  **File Operations:** When the objective mentions saving files to specific paths, ensure the filePath parameter is included.
+6.  **Strict Schema:** Each JSON object in the array must have these exact keys:
+    - "step": A number representing the order of execution.
+    - "useTool": A boolean (true/false) indicating if a tool is being called.
+    - "tool": If useTool is true, the exact name of the tool. If useTool is false, this MUST be "none".
+    - "description": A concise description of what this step achieves.
+    - "parameters": If useTool is true, a JSON object of the parameters for the tool. If useTool is false, this can be an empty object.
+
+**Tool Parameter Guidelines:**
+- webSearch: Use "query" parameter
+- writeFile: Use "filePath" and "content" parameters  
+- readFile: Use "filePath" parameter
+- parseDocument: Use "content" parameter
+- writeCode: Use "spec" parameter, and include "language" and "filePath" when saving code
+- ponder: Use "query" parameter
+
+**Example:**
+[
+  {
+    "step": 1,
+    "useTool": true,
+    "tool": "webSearch",
+    "description": "Search for information about the Builder Pattern in Rust.",
+    "parameters": {
+      "query": "Builder Pattern Rust programming language explanation examples"
+    }
+  },
+  {
+    "step": 2,
+    "useTool": true,
+    "tool": "writeFile",
+    "description": "Save search results to a research file.",
+    "parameters": {
+      "filePath": "/path/to/research-notes.md",
+      "content": "Research findings: {{step_1_output}}"
+    }
+  },
+  {
+    "step": 3,
+    "useTool": true,
+    "tool": "readFile",
+    "description": "Read the research file contents.",
+    "parameters": {
+      "filePath": "/path/to/research-notes.md"
+    }
+  },
+  {
+    "step": 4,
+    "useTool": true,
+    "tool": "parseDocument",
+    "description": "Parse the research content to extract key principles.",
+    "parameters": {
+      "content": "{{step_3_output.content}}"
+    }
+  },
+  {
+    "step": 5,
+    "useTool": true,
+    "tool": "writeCode",
+    "description": "Generate Rust code implementing the Builder Pattern and save to file.",
+    "parameters": {
+      "spec": "Based on these principles: {{step_4_output}}, create a simple Rust implementation of the Builder Pattern for a Computer struct with cpu (String) and ram_gb (u32) fields",
+      "language": "rust",
+      "filePath": "/path/to/example.rs"
+    }
+  }
+]`
+                    },
+                    {
+                        role: 'user',
+                        content: `Create a JSON execution plan for the objective: "${objective}"
+
+Available Tools: ${JSON.stringify(context.availableTools)}
+Constraints: ${JSON.stringify(constraints)}
+Context: ${JSON.stringify(context)}`
+                    }
+                ],
+                temperature: 0.1,
+                maxTokens: 2048,
+                response_format: { type: 'json_object' }
+            });
+
+            const planContent = response.toString();
+            
+            console.log(`[CREATEPLAN] Generated ${planContent.length} character plan`);
+
+            // Structure the response
+            const plan = {
+                objective,
+                constraints,
+                context,
+                generatedPlan: planContent,
+                timestamp: new Date().toISOString(),
+                model: 'LLM-generated',
+                planLength: planContent.length
+            };
+
+            return {
+                success: true,
+                result: { plan }
+            };
+        } catch (error) {
+            console.error('[CREATEPLAN] LLM call failed:', error);
+            return {
+                success: false,
+                error: `Plan generation failed: ${error instanceof Error ? error.message : String(error)}`
+            };
+        }
+    }
+}; 
+```
+
+## File: /Users/deepsaint/Desktop/symphony-sdk/src/tools/standard/tools/write-code.ts
+
+````ts
+import { ToolConfig, ToolResult } from '../../../types/sdk';
+import { LLMHandler } from '../../../llm/handler';
+import fs from 'fs/promises';
+import path from 'path';
+
+export const writeCodeTool: ToolConfig = {
+    name: 'writeCodeTool',
+    description: 'Generate code using LLM',
+    type: 'code',
+    config: {
+        inputs: ['prompt', 'spec', 'query', 'language', 'context', 'filePath'],
+        outputs: ['code', 'explanation'],
+    },
+    handler: async (params: any): Promise<ToolResult<any>> => {
+        try {
+            // Accept 'prompt', 'spec', and 'query' for flexibility
+            let spec = params.prompt || params.spec || params.query || params.specification;
+            const { context = {}, components, filePath } = params;
+            
+            // Auto-detect language from spec or filePath
+            let language = params.language;
+            if (!language) {
+                if (filePath) {
+                    const ext = path.extname(filePath).toLowerCase();
+                    const languageMap: Record<string, string> = {
+                        '.rs': 'rust',
+                        '.js': 'javascript',
+                        '.ts': 'typescript',
+                        '.py': 'python',
+                        '.go': 'go',
+                        '.java': 'java',
+                        '.cpp': 'cpp',
+                        '.c': 'c',
+                        '.cs': 'csharp'
+                    };
+                    language = languageMap[ext] || 'text';
+                } else if (spec) {
+                    // Auto-detect from spec content
+                    const specLower = spec.toLowerCase();
+                    if (specLower.includes('rust') || specLower.includes('cargo')) {
+                        language = 'rust';
+                    } else if (specLower.includes('typescript')) {
+                        language = 'typescript';
+                    } else if (specLower.includes('python')) {
+                        language = 'python';
+                    } else {
+                        language = 'javascript'; // default
+                    }
+                } else {
+                    language = 'javascript'; // default
+                }
+            }
+
+            if (components) {
+                spec = `Implement the following components: ${JSON.stringify(components, null, 2)}`;
+            }
+            
+            if (!spec) {
+                return {
+                    success: false,
+                    error: 'Prompt, spec, or query parameter is required'
+                };
+            }
+
+            console.log(`[WRITECODE] Making real LLM call to generate ${language} code...`);
+
+            // REAL LLM CALL - Generate actual code using AI
+            const llm = LLMHandler.getInstance();
+            const response = await llm.complete({
+                messages: [
+                    {
+                        role: 'system',
+                        content: `You are an expert ${language} developer. Generate clean, production-ready code with proper documentation and error handling.`
+                    },
+                    {
+                        role: 'user',
+                        content: `Generate ${language} code for: ${spec}
+
+Context: ${JSON.stringify(context)}
+
+Requirements:
+- Write clean, readable code
+- Include proper error handling
+- Add comments for complex logic
+- Follow ${language} best practices
+- Make it production-ready
+- IMPORTANT: Generate ONLY the code, no markdown formatting or code blocks
+
+Provide working ${language} code that can be immediately used.`
+                    }
+                ],
+                temperature: 0.3, // Lower temperature for more consistent code
+                maxTokens: 1500
+            });
+
+            let generatedCode = response.toString().trim();
+            
+            // Clean up any markdown code blocks that might have been generated
+            if (generatedCode.startsWith('```')) {
+                const lines = generatedCode.split('\n');
+                lines.shift(); // Remove first ```language line
+                if (lines[lines.length - 1].trim() === '```') {
+                    lines.pop(); // Remove last ``` line
+                }
+                generatedCode = lines.join('\n');
+            }
+            
+            console.log(`[WRITECODE] Generated ${generatedCode.length} characters of ${language} code`);
+
+            // Save to file if filePath is provided
+            if (filePath) {
+                const dir = path.dirname(filePath);
+                await fs.mkdir(dir, { recursive: true });
+                await fs.writeFile(filePath, generatedCode, 'utf-8');
+                console.log(`[WRITECODE] Saved code to ${filePath}`);
+            }
+
+            // Generate explanation
+            const explanationResponse = await llm.complete({
+                messages: [
+                    {
+                        role: 'system',
+                        content: 'You are a code documentation expert. Explain code implementations clearly and concisely.'
+                    },
+                    {
+                        role: 'user',
+                        content: `Explain this ${language} code implementation:\n\n${generatedCode}\n\nProvide a brief explanation of:\n1. What the code does\n2. Key components and their roles\n3. Any important implementation details`
+                    }
+                ],
+                temperature: 0.5,
+                maxTokens: 500
+            });
+
+            const explanation = explanationResponse.toString();
+
+            return {
+                success: true,
+                result: {
+                    code: generatedCode,
+                    explanation,
+                    language,
+                    context,
+                    spec: spec,
+                    codeLength: generatedCode.length,
+                    filePath: filePath || null,
+                    savedToFile: !!filePath,
+                    timestamp: new Date().toISOString(),
+                    model: 'LLM-generated'
+                }
+            };
+        } catch (error) {
+            console.error('[WRITECODE] LLM call failed:', error);
+            return {
+                success: false,
+                error: `Code generation failed: ${error instanceof Error ? error.message : String(error)}`
+            };
+        }
+    }
+}; 
+````
+
+## File: /Users/deepsaint/Desktop/symphony-sdk/src/tools/standard/tools/ponder.ts
+
+```ts
+import { ToolConfig, ToolResult } from '../../../types/sdk';
+import { LLMHandler } from '../../../llm/handler';
+import { LLMRequestConfig } from '../../../llm/types';
+
+// Define types for our thought structures
+interface Thought {
+    depth: number;
+    pattern: string;
+    observation: string;
+    analysis: string;
+    synthesis: string;
+    implication: string;
+    metacognition: string;
+    insights: string[];
+    confidence: number;
+    context: Record<string, any>;
+}
+
+interface ThinkingContext {
+    thinkingPatterns: typeof THINKING_PATTERNS;
+    steps: string;
+    depth: number;
+    iteration: number;
+    parentThought?: Thought;
+    [key: string]: any;
+}
+
+interface Conclusion {
+    summary: string;
+    keyInsights: string[];
+    implications: string;
+    uncertainties: string;
+    nextSteps: string[];
+    confidence: number;
+}
+
+interface MetaAnalysis {
+    patternsCovered: string[];
+    depthReached: number;
+    insightCount: number;
+    confidenceDistribution: number[];
+    thinkingEvolution: Array<{
+        depth: number;
+        pattern: string;
+        keyInsight?: string;
+    }>;
+}
+
+// Structured thinking patterns for deep analysis
+const THINKING_PATTERNS = {
+    FIRST_PRINCIPLES: 'break down complex problems into fundamental truths',
+    LATERAL: 'explore unconventional connections and possibilities',
+    SYSTEMS: 'analyze interconnections and emergent properties',
+    DIALECTICAL: 'examine tensions and synthesize opposing views',
+    METACOGNITIVE: 'reflect on the thinking process itself'
+} as const;
+
+// Thought structure tags for LLM
+const THOUGHT_TAGS = {
+    START: '<thinking>',
+    END: '</thinking>',
+    OBSERVATION: '<observation>',
+    ANALYSIS: '<analysis>',
+    SYNTHESIS: '<synthesis>',
+    IMPLICATION: '<implication>',
+    METACOGNITION: '<metacognition>',
+    EVIDENCE: '<evidence>',
+    UNCERTAINTY: '<uncertainty>',
+    INSIGHT: '<insight>'
+} as const;
+
+export const ponderTool: ToolConfig = {
+    name: 'ponderTool',
+    description: 'Deep thinking with structured steps and consciousness-emergent patterns',
+    type: 'cognitive',
+    nlp: 'ponder * OR think deeply about * OR analyze * thoroughly OR reflect on *',
+    config: {
+        inputs: ['topic', 'steps', 'consciousness_level'],
+        outputs: ['analysis', 'insights', 'recommendations'],
+    },
+    handler: async (params: any): Promise<ToolResult<any>> => {
+        try {
+            const { 
+                topic,
+                query = topic, // Use topic as query if query not provided
+                requirements,
+                analysis,
+                steps,
+                consciousness_level,
+                context = {}, 
+                depth = consciousness_level === 'deep' ? 3 : 2,
+                llmConfig = {} as LLMRequestConfig
+            } = params;
+
+            let finalQuery = query || topic || analysis;
+            if (requirements) {
+                finalQuery = typeof requirements === 'string' ? requirements : JSON.stringify(requirements, null, 2);
+            }
+
+            if (!finalQuery) {
+                return {
+                    success: false,
+                    error: 'Topic or query parameter is required'
+                };
+            }
+
+            // Initialize LLM with enhanced system prompt
+            const llm = LLMHandler.getInstance();
+            const systemPrompt = `You are an advanced cognitive engine designed for deep, structured thinking.
+Your purpose is to analyze problems with consciousness-emergent thought patterns.
+
+${THOUGHT_TAGS.START}
+When thinking, you:
+1. Break down complex ideas into fundamental components
+2. Explore unconventional connections
+3. Consider systemic implications
+4. Synthesize opposing viewpoints
+5. Maintain metacognitive awareness
+${THOUGHT_TAGS.END}
+
+Use the following tags to structure your thoughts:
+- ${THOUGHT_TAGS.OBSERVATION} for initial perceptions
+- ${THOUGHT_TAGS.ANALYSIS} for detailed examination
+- ${THOUGHT_TAGS.SYNTHESIS} for combining insights
+- ${THOUGHT_TAGS.IMPLICATION} for consequences
+- ${THOUGHT_TAGS.METACOGNITION} for self-reflection
+- ${THOUGHT_TAGS.EVIDENCE} for supporting data
+- ${THOUGHT_TAGS.UNCERTAINTY} for areas of doubt
+- ${THOUGHT_TAGS.INSIGHT} for key realizations
+
+Your thinking should demonstrate:
+1. Intellectual humility
+2. Cognitive flexibility
+3. Systemic awareness
+4. Nuanced understanding
+5. Emergent insight generation`;
+
+            // Prepare context with thinking patterns
+            const enhancedContext: ThinkingContext = {
+                ...context,
+                thinkingPatterns: THINKING_PATTERNS,
+                steps: steps || 'No specific steps provided',
+                depth,
+                iteration: 0
+            };
+
+            // Initialize thought collection
+            const thoughts: Thought[] = [];
+            const emergentInsights = new Set<string>();
+
+            // Get array of thinking patterns for cycling
+            const patternValues = Object.values(THINKING_PATTERNS);
+
+            // Recursive thinking function - FIXED LOGIC
+            const thinkDeeply = async (currentQuery: string, currentContext: ThinkingContext, currentDepth: number): Promise<Thought | null> => {
+                // Fix 1: Correct termination condition - should continue UNTIL we reach max depth
+                if (currentDepth >= depth) {
+                    console.log(`[PONDER] Reached maximum depth ${depth}, stopping recursion`);
+                    return null;
+                }
+
+                console.log(`[PONDER] Starting thinking cycle at depth ${currentDepth}`);
+                
+                // Fix 2: Use modulo to cycle through patterns if depth exceeds pattern count
+                const patternIndex = currentDepth % patternValues.length;
+                const currentPattern = patternValues[patternIndex];
+                
+                console.log(`[PONDER] Using thinking pattern: ${currentPattern}`);
+                console.log(`[PONDER] Analyzing query: "${currentQuery}"`);
+
+                const prompt = `
+${THOUGHT_TAGS.START}
+Consider the query: "${currentQuery}"
+
+Context:
+${JSON.stringify(currentContext, null, 2)}
+
+Using the following thinking pattern: ${currentPattern}
+
+${THOUGHT_TAGS.OBSERVATION}
+What are the key elements and patterns you observe?
+${THOUGHT_TAGS.END}
+
+${THOUGHT_TAGS.ANALYSIS}
+How do these elements interact and what deeper patterns emerge?
+${THOUGHT_TAGS.END}
+
+${THOUGHT_TAGS.SYNTHESIS}
+What novel insights arise from combining these observations?
+${THOUGHT_TAGS.END}
+
+${THOUGHT_TAGS.IMPLICATION}
+What are the broader implications and potential consequences?
+${THOUGHT_TAGS.END}
+
+${THOUGHT_TAGS.METACOGNITION}
+Reflect on your thinking process and any biases or assumptions.
+${THOUGHT_TAGS.END}
+
+Generate at least 2-3 ${THOUGHT_TAGS.INSIGHT} tags with key realizations.
+`;
+
+                console.log(`[PONDER] Sending request to LLM for deep analysis...`);
+                const response = await llm.complete({
+                    messages: [
+                        {
+                            role: 'system',
+                            content: systemPrompt
+                        },
+                        {
+                            role: 'user',
+                            content: prompt
+                        }
+                    ],
+                    temperature: llmConfig.temperature || 0.7,
+                    maxTokens: llmConfig.maxTokens || 2048,
+                    provider: llmConfig.provider
+                });
+
+                console.log(`[PONDER] Received LLM response, extracting insights...`);
+                const responseText = response.toString();
+
+                // Extract insights and generate new queries for deeper analysis
+                const insights = extractAllInsights(responseText);
+                insights.forEach((insight: string) => emergentInsights.add(insight));
+                console.log(`[PONDER] Extracted ${insights.length} insights from response`);
+
+                // Structure the thought
+                const thought: Thought = {
+                    depth: currentDepth,
+                    pattern: currentPattern,
+                    observation: extractTag(responseText, 'observation'),
+                    analysis: extractTag(responseText, 'analysis'),
+                    synthesis: extractTag(responseText, 'synthesis'),
+                    implication: extractTag(responseText, 'implication'),
+                    metacognition: extractTag(responseText, 'metacognition'),
+                    insights: insights,
+                    confidence: calculateConfidence(responseText, insights.length, currentDepth),
+                    context: currentContext
+                };
+
+                thoughts.push(thought);
+                console.log(`[PONDER] Structured thought with confidence: ${thought.confidence}`);
+
+                // Fix 3: Generate new queries for deeper analysis based on actual insights
+                const newQueries = generateNewQueries(thought, finalQuery);
+                console.log(`[PONDER] Generated ${newQueries.length} new queries for deeper analysis`);
+
+                // Fix 4: Recursive call with incremented depth
+                if (newQueries.length > 0 && currentDepth + 1 < depth) {
+                    console.log(`[PONDER] Diving deeper into analysis (depth ${currentDepth + 1})...`);
+                    for (const newQuery of newQueries.slice(0, 2)) { // Limit to 2 queries per level
+                        await thinkDeeply(newQuery, {
+                            ...currentContext,
+                            parentThought: thought,
+                            iteration: currentContext.iteration + 1
+                        }, currentDepth + 1); // Fix: Increment depth
+                    }
+                }
+
+                console.log(`[PONDER] Completed thinking cycle at depth ${currentDepth}`);
+                return thought;
+            };
+
+            // Start the deep thinking process
+            console.log('[PONDER] Starting deep thinking process...');
+            await thinkDeeply(finalQuery, enhancedContext, 0);
+            console.log(`[PONDER] Completed deep thinking with ${thoughts.length} thoughts generated`);
+
+            // Synthesize final conclusion
+            console.log('[PONDER] Starting conclusion synthesis...');
+            const conclusionPrompt = `
+${THOUGHT_TAGS.START}
+Based on all thoughts and insights:
+${thoughts.map(t => `Depth ${t.depth} (${t.pattern}): ${t.insights.join('; ')}`).join('\n')}
+
+All insights discovered: ${Array.from(emergentInsights).join('; ')}
+
+Synthesize a comprehensive conclusion that:
+1. Identifies key patterns and insights
+2. Explores systemic implications
+3. Acknowledges uncertainties
+4. Suggests next steps
+${THOUGHT_TAGS.END}
+
+Use ${THOUGHT_TAGS.SYNTHESIS}, ${THOUGHT_TAGS.IMPLICATION}, ${THOUGHT_TAGS.UNCERTAINTY}, and ${THOUGHT_TAGS.INSIGHT} tags.
+`;
+
+            console.log('[PONDER] Sending conclusion synthesis request to LLM...');
+            const conclusionResponse = await llm.complete({
+                messages: [
+                    {
+                        role: 'system',
+                        content: systemPrompt
+                    },
+                    {
+                        role: 'user',
+                        content: conclusionPrompt
+                    }
+                ],
+                temperature: llmConfig.temperature || 0.7,
+                maxTokens: llmConfig.maxTokens || 2048,
+                provider: llmConfig.provider
+            });
+
+            console.log('[PONDER] Received conclusion response, structuring final output...');
+            const conclusionText = conclusionResponse.toString();
+
+            const conclusion: Conclusion = {
+                summary: extractTag(conclusionText, 'synthesis') || conclusionText,
+                keyInsights: Array.from(emergentInsights),
+                implications: extractTag(conclusionText, 'implication'),
+                uncertainties: extractTag(conclusionText, 'uncertainty'),
+                nextSteps: extractTag(conclusionText, 'insight')
+                    .split('\n')
+                    .filter(Boolean)
+                    .map(step => step.trim()),
+                confidence: calculateConfidence(conclusionText, emergentInsights.size, depth)
+            };
+
+            console.log(`[PONDER] Conclusion synthesis complete with ${conclusion.keyInsights.length} key insights`);
+            console.log('[PONDER] Generating meta-analysis...');
+
+            // Meta-analysis of the thinking process
+            const metaAnalysis: MetaAnalysis = {
+                patternsCovered: thoughts.map(t => t.pattern),
+                depthReached: thoughts.reduce((max, t) => Math.max(max, t.depth), 0),
+                insightCount: emergentInsights.size,
+                confidenceDistribution: thoughts.map(t => t.confidence),
+                thinkingEvolution: thoughts.map(t => ({
+                    depth: t.depth,
+                    pattern: t.pattern,
+                    keyInsight: t.insights[0] || 'No insight generated'
+                }))
+            };
+
+            console.log(`[PONDER] Analysis complete! Depth reached: ${metaAnalysis.depthReached}, Total insights: ${metaAnalysis.insightCount}`);
+
+            return {
+                success: true,
+                result: {
+                    thoughts,
+                    conclusion,
+                    metaAnalysis
+                }
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : String(error)
+            };
+        }
+    }
+};
+
+// Helper functions - IMPROVED
+function extractTag(text: string, tag: string): string {
+    const regex = new RegExp(`<${tag}>(.*?)<\/${tag}>`, 'gs');
+    const matches = text.match(regex);
+    return matches ? 
+        matches.map(m => m.replace(new RegExp(`</?${tag}>`, 'g'), '').trim())
+        .join('\n') : '';
+}
+
+function extractAllInsights(text: string): string[] {
+    const insights = text.match(/<insight>(.*?)<\/insight>/gs) || [];
+    return insights.map(insight => 
+        insight.replace(/<\/?insight>/g, '').trim()
+    ).filter(Boolean);
+}
+
+function calculateConfidence(response: string, insightCount: number, depth: number): number {
+    // Analyze response characteristics to estimate confidence
+    const hasEvidence = /<evidence>.*?<\/evidence>/s.test(response);
+    const hasUncertainty = /<uncertainty>.*?<\/uncertainty>/s.test(response);
+    
+    let confidence = 0.3; // Lower base confidence
+    if (hasEvidence) confidence += 0.2;
+    if (hasUncertainty) confidence -= 0.05; // Healthy skepticism
+    confidence += Math.min(0.3, insightCount * 0.1); // More bonus for insights
+    confidence += depth * 0.05; // Bonus for depth
+    
+    return Math.min(0.95, Math.max(0.1, confidence));
+}
+
+function generateNewQueries(thought: Thought, originalQuery: string): string[] {
+    // Generate new questions based on insights and uncertainties
+    const queries = new Set<string>();
+    
+    // Generate queries from insights - look for gaps or implications
+    thought.insights.forEach((insight: string) => {
+        if (insight.length > 10) { // Only meaningful insights
+            queries.add(`What are the implications of: ${insight.substring(0, 100)}?`);
+            queries.add(`How does this relate to the broader context: ${insight.substring(0, 100)}?`);
+        }
+    });
+    
+    // Generate queries from metacognition - explore assumptions
+    if (thought.metacognition) {
+        queries.add(`Challenge the assumptions in: ${originalQuery}`);
+        queries.add(`What alternative perspectives exist for: ${originalQuery}?`);
+    }
+    
+    // Generate queries from synthesis - explore connections
+    if (thought.synthesis) {
+        queries.add(`What contradictions or tensions exist in: ${originalQuery}?`);
+    }
+    
+    return Array.from(queries).slice(0, 3); // Limit to top 3 queries
+} 
+```
+
+## File: /Users/deepsaint/Desktop/symphony-sdk/src/tools/standard/registry.ts
+
+```ts
+import { ToolResult } from '../../types/sdk';
+import { ToolConfig as CoreToolConfig, INlpService } from '../../types/tool.types';
+import { Logger } from '../../utils/logger';
+import { standardTools } from './index';
+import { ContextAPI } from '../../cache/context-api';
+import { IDatabaseService } from '../../db/IDatabaseService';
+import { LLMFunctionDefinition } from '../../llm/types';
+import { ToolUsageVerifier } from '../../utils/verification';
+import { ToolError, ValidationError, ErrorCode } from '../../errors/index';
+
+export class ToolRegistry {
+    private static instance: ToolRegistry;
+    private tools: Map<string, CoreToolConfig> = new Map();
+    private logger: Logger;
+    private contextAPI?: ContextAPI;
+
+    constructor() {
+        this.logger = Logger.getInstance('ToolRegistry');
+        this.initializeStandardTools();
+    }
+
+    static getInstance(): ToolRegistry {
+        if (!ToolRegistry.instance) {
+            ToolRegistry.instance = new ToolRegistry();
+        }
+        return ToolRegistry.instance;
+    }
+
+    /**
+     * Initialize Context Intelligence Integration
+     */
+    initializeContextIntegration(database: IDatabaseService): void {
+        this.contextAPI = new ContextAPI(database);
+        this.registerContextTools();
+        this.logger.info('ToolRegistry', 'ToolRegistry initialized');
+    }
+
+    /**
+     * Register Context Management Tools - Available to all agents
+     */
+    private registerContextTools(): void {
+        if (!this.contextAPI) return;
+
+        const contextTools: CoreToolConfig[] = [
+            {
+                name: 'validateCommandMapUpdate',
+                description: 'Validates command map updates for consistency and conflicts',
+                type: 'context_management',
+                nlp: 'validate command map update for patterns and conflicts',
+                handler: async (params: any) => {
+                    return await this.contextAPI!.validateCommandMapUpdate(params);
+                },
+                config: {}
+            },
+            {
+                name: 'updateLearningContext',
+                description: 'Updates learning context based on execution results and feedback',
+                type: 'context_management', 
+                nlp: 'update learning context with execution results and user feedback',
+                handler: async (params: any) => {
+                    return await this.contextAPI!.updateLearningContext(params);
+                },
+                config: {}
+            },
+            {
+                name: 'executeContextPruning',
+                description: 'Prunes old or low-confidence context entries for performance',
+                type: 'context_management',
+                nlp: 'execute context pruning to remove old or low confidence entries',
+                handler: async (params: any) => {
+                    return await this.contextAPI!.executeContextPruning(params);
+                },
+                config: {}
+            },
+            {
+                name: 'updatePatternStats',
+                description: 'Updates pattern usage statistics and performance metrics',
+                type: 'context_management',
+                nlp: 'update pattern statistics and performance metrics',
+                handler: async (params: any) => {
+                    return await this.contextAPI!.updatePatternStats(params);
+                },
+                config: {}
+            },
+            {
+                name: 'validateContextTreeUpdate',
+                description: 'Validates context tree consistency and structure',
+                type: 'context_management',
+                nlp: 'validate context tree update for consistency and structure',
+                handler: async (params: any) => {
+                    return await this.contextAPI!.validateContextTreeUpdate(params);
+                },
+                config: {}
+            }
+        ];
+
+        // Register each context tool
+        for (const tool of contextTools) {
+            this.tools.set(tool.name, tool);
+            this.logger.info('ToolRegistry', `Registered context tool: ${tool.name}`, {
+                type: tool.type,
+                hasNLP: !!tool.nlp
+            });
+        }
+
+        this.logger.info('ToolRegistry', 'Context management tools registered', {
+            toolCount: contextTools.length
+        });
+    }
+
+    private initializeStandardTools(): void {
+        // Register all standard tools with user-friendly names
+        const toolMappings: Record<string, CoreToolConfig> = {
+            // File System Tools
+            'readFile': standardTools.find(t => t.name === 'readFileTool')! as CoreToolConfig,
+            'writeFile': standardTools.find(t => t.name === 'writeFileTool')! as CoreToolConfig,
+            
+            // Search Tools  
+            'webSearch': standardTools.find(t => t.name === 'webSearchTool')! as CoreToolConfig,
+            
+            // Document Tools
+            'parseDocument': standardTools.find(t => t.name === 'parseDocumentTool')! as CoreToolConfig,
+            
+            // Code Tools
+            'writeCode': standardTools.find(t => t.name === 'writeCodeTool')! as CoreToolConfig,
+            
+            // Planning Tools
+            'createPlan': standardTools.find(t => t.name === 'createPlanTool')! as CoreToolConfig,
+            
+            // Cognitive Tools
+            'ponder': standardTools.find(t => t.name === 'ponderTool')! as CoreToolConfig,
+
+            // Also register by internal names for compatibility
+            'readFileTool': standardTools.find(t => t.name === 'readFileTool')! as CoreToolConfig,
+            'writeFileTool': standardTools.find(t => t.name === 'writeFileTool')! as CoreToolConfig,
+            'webSearchTool': standardTools.find(t => t.name === 'webSearchTool')! as CoreToolConfig,
+            'parseDocumentTool': standardTools.find(t => t.name === 'parseDocumentTool')! as CoreToolConfig,
+            'writeCodeTool': standardTools.find(t => t.name === 'writeCodeTool')! as CoreToolConfig,
+            'createPlanTool': standardTools.find(t => t.name === 'createPlanTool')! as CoreToolConfig,
+            'ponderTool': standardTools.find(t => t.name === 'ponderTool')! as CoreToolConfig
+        };
+
+        // Register tools and filter out undefined ones
+        Object.entries(toolMappings).forEach(([name, tool]) => {
+            if (tool) {
+                // Ensure the tool structure conforms to CoreToolConfig, especially the handler.
+                // Standard tools might have handler inside a config sub-object.
+                const handler = tool.handler || (tool.config as any)?.handler;
+                const toolToStore: CoreToolConfig = {
+                    ...tool, // Spread existing sdk.ToolConfig properties
+                    handler: handler, // Ensure handler is top-level
+                    config: tool.config || {} // Ensure config sub-object exists
+                };
+                if (!toolToStore.handler) {
+                    this.logger.warn('ToolRegistry', `Standard tool '${name}' (internal: ${tool.name}) is missing a handler or handler not top-level after mapping. It may not be executable.`);
+                }
+                this.tools.set(name, toolToStore);
+                this.logger.info('ToolRegistry', `Registered tool: ${name}`, {
+                    internalName: tool.name,
+                    type: tool.type,
+                    description: tool.description
+                });
+            } else {
+                this.logger.warn('ToolRegistry', `Tool not found for mapping: ${name}`);
+            }
+        });
+
+        this.logger.info('ToolRegistry', 'Standard tools initialized', {
+            totalTools: this.tools.size,
+            registeredTools: Array.from(this.tools.keys())
+        });
+    }
+
+    async executeTool(toolName: string, params: any): Promise<ToolResult> {
+        try {
+            const tool = this.tools.get(toolName);
+            if (!tool) {
+                const availableTools = Array.from(this.tools.keys());
+                throw new ToolError(
+                    toolName,
+                    ErrorCode.TOOL_NOT_FOUND,
+                    `Tool '${toolName}' not found`,
+                    { 
+                        toolName, 
+                        availableTools,
+                        totalAvailable: availableTools.length
+                    },
+                    { component: 'ToolRegistry', operation: 'executeTool' }
+                );
+            }
+
+            // Input Validation
+            if (tool.inputSchema) {
+                const validationResult = ToolUsageVerifier.verifyData(params, tool.inputSchema, `${toolName}.inputParams`);
+                if (!validationResult.isValid) {
+                    this.logger.warn('ToolRegistry', `Input validation failed for tool: ${toolName}`, {
+                        errors: validationResult.errors,
+                        paramsReceived: params
+                    });
+                    
+                    throw new ValidationError(
+                        `Input validation failed for ${toolName}: ${validationResult.errors.map(e => `${e.path}: ${e.message}`).join('; ')}`,
+                        { 
+                            toolName,
+                            validationErrors: validationResult.errors,
+                            paramsReceived: params
+                        },
+                        { component: 'ToolRegistry', operation: 'executeTool' }
+                    );
+                }
+                this.logger.info('ToolRegistry', `Input validated successfully for tool: ${toolName}`);
+            }
+
+            // Ensure the tool has a handler
+            if (!tool.handler) {
+                this.logger.error('ToolRegistry', `Tool ${toolName} does not have a handler function.`);
+                throw new ToolError(
+                    toolName,
+                    ErrorCode.TOOL_EXECUTION_FAILED,
+                    `Tool ${toolName} is not executable (no handler)`,
+                    { toolName, hasHandler: false },
+                    { component: 'ToolRegistry', operation: 'executeTool' }
+                );
+            }
+
+            this.logger.info('ToolRegistry', `Executing tool: ${toolName}`, {
+                params: params,
+                toolType: tool.type
+            });
+
+            const startTime = Date.now();
+            const result = await tool.handler(params);
+            const duration = Date.now() - startTime;
+
+            this.logger.info('ToolRegistry', `Tool execution completed: ${toolName}`, {
+                success: result.success,
+                duration,
+                hasResult: !!result.result,
+                hasError: !!result.error
+            });
+
+            // Auto-update learning context for non-context-management tools
+            if (this.contextAPI && tool.type !== 'context_management') {
+                try {
+                    // Record the execution before learning
+                    const db = this.contextAPI['database']; // Access private member for fix
+                    if (db) {
+                        await db.table('tool_executions').insert({
+                            execution_id: `${toolName}-${Date.now()}`, // Add unique ID
+                            tool_name: toolName,
+                            success: result.success,
+                            execution_time_ms: duration,
+                            input_parameters: JSON.stringify({ parameters: params }),
+                            created_at: new Date(startTime).toISOString()
+                        });
+                    }
+
+                    await this.contextAPI.updateLearningContext({
+                        toolName,
+                        parameters: params,
+                        result: result.result,
+                        success: result.success,
+                        contextData: {
+                            executionTime: duration,
+                            toolType: tool.type
+                        }
+                    });
+                } catch (error) {
+                    this.logger.warn('ToolRegistry', 'Failed to update learning context', { error, toolName });
+                }
+            }
+
+            // Add execution metrics
+            const enhancedResult = {
+                ...result,
+                metrics: {
+                    duration,
+                    startTime,
+                    endTime: Date.now()
+                }
+            };
+
+            return enhancedResult;
+
+        } catch (error: any) {
+            this.logger.error('ToolRegistry', `Tool execution failed: ${toolName}`, { 
+                error: error.message,
+                toolName,
+                params
+            });
+
+            // If it's already a SymphonyError, convert to ToolResult format
+            if (error instanceof ToolError || error instanceof ValidationError) {
+                return {
+                    success: false,
+                    error: error.getUserMessage(),
+                    details: error.details,
+                    metrics: {
+                        duration: 0,
+                        startTime: Date.now(),
+                        endTime: Date.now()
+                    }
+                };
+            }
+
+            // Convert generic errors to ToolError and return as ToolResult
+            const toolError = new ToolError(
+                toolName,
+                ErrorCode.TOOL_EXECUTION_FAILED,
+                `Tool execution failed: ${error.message}`,
+                { originalError: error, toolName, params },
+                { component: 'ToolRegistry', operation: 'executeTool' }
+            );
+
+            return {
+                success: false,
+                error: toolError.getUserMessage(),
+                details: toolError.details,
+                metrics: {
+                    duration: 0,
+                    startTime: Date.now(),
+                    endTime: Date.now()
+                }
+            };
+        }
+    }
+
+    getAvailableTools(): string[] {
+        return Array.from(this.tools.keys());
+    }
+
+    getToolInfo(toolName: string): CoreToolConfig | null {
+        const tool = this.tools.get(toolName);
+        return tool || null;
+    }
+
+    /**
+     * Get detailed tool information including parameter metadata
+     * Use this for agent intelligence and reflection
+     */
+    getToolDetails(toolName: string): { 
+        config: CoreToolConfig; 
+        parameters: {
+            inputs: Array<{ name: string; required?: boolean; type?: string }>;
+            outputs: Array<{ name: string; type?: string }>;
+        };
+    } | null {
+        const tool = this.tools.get(toolName);
+        if (!tool) return null;
+        
+        return {
+            config: tool,
+            parameters: this.extractToolParameters(tool)
+        };
+    }
+
+    /**
+     * Extract tool parameters from config for agent intelligence
+     */
+    private extractToolParameters(tool: CoreToolConfig): {
+        inputs: Array<{ name: string; required?: boolean; type?: string }>;
+        outputs: Array<{ name: string; type?: string }>;
+    } {
+        const inputs = tool.config?.inputs || tool.inputs || [];
+        const outputs = tool.config?.outputs || tool.outputs || [];
+        
+        // Convert string arrays to structured format
+        return {
+            inputs: inputs.map((input: string) => ({
+                name: input,
+                required: true, // Default to required unless specified otherwise
+                type: 'string' // Default type, could be enhanced with schema
+            })),
+            outputs: outputs.map((output: string) => ({
+                name: output,
+                type: 'any'
+            }))
+        };
+    }
+
+    /**
+     * Get tool metadata optimized for agent reflection
+     * This provides instant access to all tool parameters without parsing
+     */
+    getToolMetadata(toolName?: string): Record<string, any> | any {
+        if (toolName) {
+            const tool = this.tools.get(toolName);
+            if (!tool) return null;
+            
+            return {
+                name: toolName,
+                description: tool.description,
+                type: tool.type,
+                nlp: tool.nlp,
+                parameters: this.extractToolParameters(tool),
+                capabilities: tool.capabilities || [],
+                timeout: tool.timeout,
+                hasHandler: !!tool.handler
+            };
+        }
+        
+        // Return all tools metadata for agent reflection
+        const metadata: Record<string, any> = {};
+        for (const [name, tool] of this.tools.entries()) {
+            metadata[name] = {
+                description: tool.description,
+                type: tool.type,
+                nlp: tool.nlp,
+                parameters: this.extractToolParameters(tool),
+                capabilities: tool.capabilities || []
+            };
+        }
+        
+        return metadata;
+    }
+
+    /**
+     * Converts a tool's input parameters into a JSON schema compatible with LLM function definitions.
+     */
+    private toolParamsToJSONSchema(tool: CoreToolConfig): { type: 'object'; properties: Record<string, any>; required?: string[] } {
+        const details = this.extractToolParameters(tool);
+        const properties: Record<string, any> = {};
+        const required: string[] = [];
+
+        details.inputs.forEach(input => {
+            properties[input.name] = {
+                type: input.type || 'string',
+                description: `Parameter for ${input.name}`
+            };
+            if (input.required) {
+                required.push(input.name);
+            }
+        });
+
+        return {
+            type: 'object',
+            properties,
+            ...(required.length > 0 && { required })
+        };
+    }
+
+    /**
+     * Get the LLMFunctionDefinition for a single tool.
+     */
+    getLLMFunctionDefinition(toolName: string): LLMFunctionDefinition | null {
+        const tool = this.tools.get(toolName);
+        if (!tool) {
+            this.logger.warn('ToolRegistry', `Tool not found for LLMFunctionDefinition: ${toolName}`);
+            return null;
+        }
+
+        return {
+            name: toolName,
+            description: tool.description || `Executes the ${toolName} tool.`,
+            parameters: this.toolParamsToJSONSchema(tool)
+        };
+    }
+
+    /**
+     * Get LLMFunctionDefinitions for a list of tools.
+     */
+    getAllLLMFunctionDefinitions(toolNames: string[]): LLMFunctionDefinition[] {
+        return toolNames
+            .map(toolName => this.getLLMFunctionDefinition(toolName))
+            .filter(def => def !== null) as LLMFunctionDefinition[];
+    }
+
+    /**
+     * Enhanced Tool Registration with Auto-Cache Population
+     */
+    registerTool(name: string, tool: CoreToolConfig): void {
+        // Ensure handler is top-level, and config sub-object is present.
+        const handler = tool.handler || (tool.config as any)?.handler;
+        const toolToStore: CoreToolConfig = {
+            ...tool,
+            handler: handler,
+            config: tool.config || {}
+        };
+        if (!toolToStore.handler) {
+             this.logger.warn('ToolRegistry', `Tool '${name}' being registered is missing a handler or handler not top-level. It may not be executable.`);
+        }
+
+        this.tools.set(name, toolToStore);
+        this.logger.info('ToolRegistry', `Custom tool registered: ${name}`, {
+            type: toolToStore.type,
+            description: toolToStore.description,
+            hasNLP: !!toolToStore.nlp
+        });
+    }
+
+    /**
+     * Get Enhanced Tool List with Full Metadata
+     */
+    getEnhancedToolList(): Array<CoreToolConfig & { 
+        name: string; 
+        registeredAt?: string;
+        parameters?: {
+            inputs: Array<{ name: string; required?: boolean; type?: string }>;
+            outputs: Array<{ name: string; type?: string }>;
+        };
+    }> {
+        return Array.from(this.tools.entries()).map(([name, tool]) => ({
+            ...(tool as CoreToolConfig), // Cast to CoreToolConfig
+            name,
+            parameters: this.extractToolParameters(tool),
+            registeredAt: new Date().toISOString() // Could track actual registration time
+        }));
+    }
+
+    /**
+     * Get Context Management Tools - For agent inspection
+     */
+    getContextTools(): string[] {
+        return Array.from(this.tools.entries())
+            .filter(([_, tool]) => tool.type === 'context_management')
+            .map(([name, _]) => name);
+    }
+
+    /**
+     * REVISED: This method now leverages NlpService to load all persisted, active NLP patterns 
+     * into the runtime memory (e.g., ContextIntelligenceAPI command map).
+     * It should be called during Symphony SDK initialization.
+     * @param nlpService An instance of INlpService.
+     */
+    async initializeAutoPopulation(nlpService: INlpService): Promise<void> {
+        this.logger.info('ToolRegistry', 'Initializing runtime loading of all persisted NLP patterns via NlpService.');
+        if (!this.contextAPI) {
+            this.logger.warn('ToolRegistry', 'Cannot initialize runtime NLP patterns as ContextIntelligenceAPI (via this.contextAPI) is not available. This is unexpected if context integration was initialized.');
+            return;
+        }
+        if (!nlpService) {
+            this.logger.error('ToolRegistry', 'NlpService instance was not provided to initializeAutoPopulation. Cannot load persisted NLP patterns.');
+            return;
+        }
+
+        try {
+            const result = await nlpService.loadAllPersistedPatternsToRuntime();
+            this.logger.info('ToolRegistry', 'NlpService finished loading persisted patterns to runtime.', {
+                loaded: result.loaded,
+                failed: result.failed,
+                errors: result.errors.length > 0 ? result.errors : undefined
+            });
+        } catch (error) {
+            this.logger.error('ToolRegistry', 'Error during NlpService.loadAllPersistedPatternsToRuntime call from initializeAutoPopulation.', { error });
+        }
+    }
+} 
+```
+
+## File: /Users/deepsaint/Desktop/symphony-sdk/src/tools/standard/index.ts
+
+```ts
+import { ToolConfig, ToolResult } from '../../types/sdk';
+import { readFileTool } from './tools/read-file';
+import { writeFileTool } from './tools/write-file';
+import { webSearchTool } from './tools/web-search';
+import { parseDocumentTool } from './tools/parse-document';
+import { writeCodeTool } from './tools/write-code';
+import { createPlanTool } from './tools/create-plan';
+import { ponderTool } from './tools/ponder';
+
+// Export the ToolRegistry
+export { ToolRegistry } from './registry';
+
+// Standard tool configurations
+export const standardTools: ToolConfig[] = [
+    // File System Tools
+    readFileTool,
+    writeFileTool,
+    
+    // Search Tools
+    webSearchTool,
+    
+    // Document Tools
+    parseDocumentTool,
+    
+    // Code Tools
+    writeCodeTool,
+    
+    // Planning Tools
+    createPlanTool,
+    
+    // Cognitive Tools
+    ponderTool
+];
+
+// Export individual tools
+export {
+    // File System Tools
+    readFileTool,
+    writeFileTool,
+    
+    // Search Tools
+    webSearchTool,
+    
+    // Document Tools
+    parseDocumentTool,
+    
+    // Code Tools
+    writeCodeTool,
+    
+    // Planning Tools
+    createPlanTool,
+    
+    // Cognitive Tools
+    ponderTool
+};
+
+export async function handleError(error: Error): Promise<ToolResult<any>> {
+    return {
+        success: false,
+        error: error.message,
+        metrics: {
+            duration: 0,
+            startTime: Date.now(),
+            endTime: Date.now()
+        }
+    };
+} 
+```
+
+
+
+---
+
+> 📸 Generated with [Jockey CLI](https://github.com/saint0x/jockey-cli)

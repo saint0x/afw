@@ -299,7 +299,10 @@ impl LLMProvider for OpenAIProvider {
     }
 
     async fn initialize(&self) -> AriaResult<()> {
+        println!("🔍 DEBUG: OpenAIProvider::initialize called");
+        
         if self.api_key.is_empty() {
+            println!("🔍 DEBUG: API key is empty - returning error");
             return Err(AriaError::new(
                 ErrorCode::LLMProviderNotFound,
                 ErrorCategory::LLM,
@@ -308,26 +311,59 @@ impl LLMProvider for OpenAIProvider {
             ));
         }
         
+        println!("🔍 DEBUG: API key provided (length: {})", self.api_key.len());
+        println!("🔍 DEBUG: API key starts with: {}...", &self.api_key[..20.min(self.api_key.len())]);
+        
         // Test API key with a minimal request
+        println!("🔍 DEBUG: Calling health_check for API key validation...");
         match self.health_check().await {
-            Ok(true) => Ok(()),
-            Ok(false) => Err(AriaError::new(
-                ErrorCode::LLMProviderNotFound,
-                ErrorCategory::LLM,
-                ErrorSeverity::Critical,
-                &format!("OpenAI initialization failed: {}", "API key validation failed")
-            )),
-            Err(e) => Err(AriaError::new(
-                ErrorCode::LLMProviderNotFound,
-                ErrorCategory::LLM,
-                ErrorSeverity::Critical,
-                &format!("OpenAI initialization failed: {}", e)
-            )),
+            Ok(true) => {
+                println!("🔍 DEBUG: Health check passed - initialization successful");
+                Ok(())
+            },
+            Ok(false) => {
+                println!("🔍 DEBUG: Health check returned false - API key validation failed");
+                Err(AriaError::new(
+                    ErrorCode::LLMProviderNotFound,
+                    ErrorCategory::LLM,
+                    ErrorSeverity::Critical,
+                    &format!("OpenAI initialization failed: {}", "API key validation failed")
+                ))
+            },
+            Err(e) => {
+                println!("🔍 DEBUG: Health check returned error: {:?}", e);
+                Err(AriaError::new(
+                    ErrorCode::LLMProviderNotFound,
+                    ErrorCategory::LLM,
+                    ErrorSeverity::Critical,
+                    &format!("OpenAI initialization failed: {}", e)
+                ))
+            },
         }
     }
 
     async fn complete(&self, request: LLMRequest) -> AriaResult<LLMResponse> {
+        println!("🔍 DEBUG: OpenAIProvider::complete called");
+        
         let openai_request = self.convert_request(&request);
+        println!("🔍 DEBUG: Converted to OpenAI request format");
+        println!("🔍 DEBUG: Request model: {}", openai_request.model);
+        println!("🔍 DEBUG: Request messages count: {}", openai_request.messages.len());
+        println!("🔍 DEBUG: Request temperature: {}", openai_request.temperature);
+        println!("🔍 DEBUG: Request max_tokens: {:?}", openai_request.max_tokens);
+        
+        // Debug the first message content
+        if let Some(first_msg) = openai_request.messages.first() {
+            println!("🔍 DEBUG: First message role: {}", first_msg.role);
+            if let Some(content) = &first_msg.content {
+                println!("🔍 DEBUG: First message content length: {}", content.len());
+                println!("🔍 DEBUG: First message content (first 100 chars): {}", 
+                    content.chars().take(100).collect::<String>());
+            }
+        }
+        
+        println!("🔍 DEBUG: Making HTTP request to OpenAI API...");
+        println!("🔍 DEBUG: URL: {}/chat/completions", self.base_url);
         
         let response = match tokio::time::timeout(
             Duration::from_secs(self.timeout_seconds),
@@ -335,36 +371,82 @@ impl LLMProvider for OpenAIProvider {
                 .json(&openai_request)
                 .send()
         ).await {
-            Ok(Ok(response)) => response,
-            Ok(Err(e)) => return Err(AriaError::new(
-                ErrorCode::LLMApiError,
-                ErrorCategory::LLM,
-                ErrorSeverity::High,
-                &format!("OpenAI request failed: {}", e)
-            )),
-            Err(_) => return Err(AriaError::new(
-                ErrorCode::LLMApiError,
-                ErrorCategory::LLM,
-                ErrorSeverity::High,
-                &format!("OpenAI request timeout after {} seconds", self.timeout_seconds)
-            )),
+            Ok(Ok(response)) => {
+                println!("🔍 DEBUG: HTTP request successful");
+                println!("🔍 DEBUG: Response status: {}", response.status());
+                response
+            },
+            Ok(Err(e)) => {
+                println!("🔍 DEBUG: HTTP request failed: {}", e);
+                return Err(AriaError::new(
+                    ErrorCode::LLMApiError,
+                    ErrorCategory::LLM,
+                    ErrorSeverity::High,
+                    &format!("OpenAI request failed: {}", e)
+                ));
+            },
+            Err(_) => {
+                println!("🔍 DEBUG: HTTP request timed out after {} seconds", self.timeout_seconds);
+                return Err(AriaError::new(
+                    ErrorCode::LLMApiError,
+                    ErrorCategory::LLM,
+                    ErrorSeverity::High,
+                    &format!("OpenAI request timeout after {} seconds", self.timeout_seconds)
+                ));
+            },
         };
 
         if !response.status().is_success() {
             let status = response.status().as_u16();
             let body = response.text().await.unwrap_or_default();
+            println!("🔍 DEBUG: HTTP request failed with status {}: {}", status, body);
             return Err(self.handle_api_error(status, &body));
         }
 
+        println!("🔍 DEBUG: Parsing OpenAI response JSON...");
         let openai_response: OpenAIResponse = response.json().await
-            .map_err(|e| AriaError::new(
-                ErrorCode::LLMInvalidResponse,
-                ErrorCategory::LLM,
-                ErrorSeverity::High,
-                &format!("Failed to parse OpenAI response: {}", e)
-            ))?;
+            .map_err(|e| {
+                println!("🔍 DEBUG: Failed to parse OpenAI response JSON: {}", e);
+                AriaError::new(
+                    ErrorCode::LLMInvalidResponse,
+                    ErrorCategory::LLM,
+                    ErrorSeverity::High,
+                    &format!("Failed to parse OpenAI response: {}", e)
+                )
+            })?;
 
-        self.convert_response(openai_response)
+        println!("🔍 DEBUG: OpenAI response parsed successfully");
+        println!("🔍 DEBUG: Response ID: {}", openai_response.id);
+        println!("🔍 DEBUG: Response model: {}", openai_response.model);
+        println!("🔍 DEBUG: Response choices count: {}", openai_response.choices.len());
+        
+        if let Some(first_choice) = openai_response.choices.first() {
+            if let Some(content) = &first_choice.message.content {
+                println!("🔍 DEBUG: First choice content length: {}", content.len());
+                println!("🔍 DEBUG: First choice content (first 200 chars): {}", 
+                    content.chars().take(200).collect::<String>());
+            } else {
+                println!("🔍 DEBUG: First choice has no content");
+            }
+            println!("🔍 DEBUG: First choice finish_reason: {:?}", first_choice.finish_reason);
+        }
+
+        println!("🔍 DEBUG: Converting OpenAI response to Aria format...");
+        let result = self.convert_response(openai_response);
+        
+        match &result {
+            Ok(aria_response) => {
+                println!("🔍 DEBUG: Successfully converted to Aria response");
+                println!("🔍 DEBUG: Aria response content length: {}", aria_response.content.len());
+                println!("🔍 DEBUG: Aria response content (first 200 chars): {}", 
+                    aria_response.content.chars().take(200).collect::<String>());
+            }
+            Err(e) => {
+                println!("🔍 DEBUG: Failed to convert to Aria response: {:?}", e);
+            }
+        }
+        
+        result
     }
 
     async fn complete_stream(&self, request: LLMRequest) -> AriaResult<Box<dyn Stream<Item = AriaResult<LLMResponse>> + Unpin + Send>> {
@@ -401,6 +483,8 @@ impl LLMProvider for OpenAIProvider {
     }
 
     async fn health_check(&self) -> AriaResult<bool> {
+        println!("🔍 DEBUG: OpenAIProvider::health_check called");
+        
         // Simple health check with minimal request using raw HTTP
         let test_request = serde_json::json!({
             "model": "gpt-3.5-turbo",
@@ -408,15 +492,37 @@ impl LLMProvider for OpenAIProvider {
             "max_tokens": 1
         });
         
+        println!("🔍 DEBUG: Making health check request to OpenAI...");
+        println!("🔍 DEBUG: URL: {}/chat/completions", self.base_url);
+        println!("🔍 DEBUG: Timeout: {} seconds", self.timeout_seconds);
+        
         match tokio::time::timeout(
             Duration::from_secs(self.timeout_seconds),
             self.client.post(&format!("{}/chat/completions", self.base_url))
                 .json(&test_request)
                 .send()
         ).await {
-            Ok(Ok(response)) => Ok(response.status().is_success()),
-            Ok(Err(_)) => Ok(false),
-            Err(_) => Ok(false), // Timeout means not healthy
+            Ok(Ok(response)) => {
+                let status = response.status();
+                println!("🔍 DEBUG: Health check response status: {}", status);
+                
+                if status.is_success() {
+                    println!("🔍 DEBUG: Health check succeeded");
+                    Ok(true)
+                } else {
+                    let body = response.text().await.unwrap_or_default();
+                    println!("🔍 DEBUG: Health check failed with status {}: {}", status, body);
+                    Ok(false)
+                }
+            },
+            Ok(Err(e)) => {
+                println!("🔍 DEBUG: Health check request failed: {}", e);
+                Ok(false)
+            },
+            Err(_) => {
+                println!("🔍 DEBUG: Health check timed out after {} seconds", self.timeout_seconds);
+                Ok(false)
+            }, // Timeout means not healthy
         }
     }
 
