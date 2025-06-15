@@ -111,6 +111,9 @@ impl PlanningEngineInterface for PlanningEngine {
                 disk_mb: 10,
                 network_bandwidth_kbps: None,
                 container_count: 0,
+                cpu_cores: Some(1),
+                timeout_seconds: Some(30),
+                max_concurrent: Some(1),
             },
         })
     }

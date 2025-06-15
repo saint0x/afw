@@ -2,9 +2,12 @@ use async_trait::async_trait;
 use crate::engines::{ExecutionEngineInterface, RuntimeEngine, ContainerManagerInterface};
 use crate::engines::llm::types::*;
 use crate::engines::llm::LLMHandlerInterface;
+use crate::engines::tool_registry::{ToolRegistry, ToolRegistryInterface};
+use crate::engines::system_prompt::SystemPromptService;
 use crate::types::*;
 use crate::errors::{AriaResult, AriaError, ErrorCode, ErrorCategory, ErrorSeverity};
 use std::collections::HashMap;
+use std::sync::Arc;
 use uuid::Uuid;
 use serde_json::Value;
 use regex::Regex;
@@ -14,15 +17,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// It preserves Symphony's brilliant unconscious tool execution logic while
 /// adding container orchestration capabilities.
 pub struct ExecutionEngine {
-    tool_registry: Box<dyn ToolRegistryInterface>,
+    tool_registry: Arc<ToolRegistry>,
     llm_handler: Box<dyn LLMHandlerInterface>,
     container_manager: Option<Box<dyn ContainerManagerInterface>>,
+    system_prompt_service: SystemPromptService,
     max_orchestration_steps: usize,
 }
 
 impl ExecutionEngine {
     pub fn new(
-        tool_registry: Box<dyn ToolRegistryInterface>,
+        tool_registry: Arc<ToolRegistry>,
         llm_handler: Box<dyn LLMHandlerInterface>,
         container_manager: Option<Box<dyn ContainerManagerInterface>>,
     ) -> Self {
@@ -30,6 +34,7 @@ impl ExecutionEngine {
             tool_registry,
             llm_handler,
             container_manager,
+            system_prompt_service: SystemPromptService::new(),
             max_orchestration_steps: 5,
         }
     }
@@ -171,6 +176,7 @@ impl ExecutionEngine {
     }
 
     /// Execute with orchestration for multi-tool workflows
+    /// This preserves Symphony's brilliant multi-tool orchestration logic
     async fn execute_with_orchestration(
         &self,
         task: &str,
@@ -184,8 +190,8 @@ impl ExecutionEngine {
         let mut final_response = String::new();
         let mut orchestration_step = 0;
 
-        // Enhanced system prompt for orchestration
-        let orchestration_prompt = self.build_orchestration_prompt(task, agent_config);
+        // Generate sophisticated orchestration prompt using SystemPromptService
+        let orchestration_prompt = self.system_prompt_service.generate_orchestration_prompt(task, agent_config);
         
         conversation_history.push(LLMMessage {
             role: "system".to_string(),
@@ -392,13 +398,14 @@ impl ExecutionEngine {
     }
 
     /// Execute a single-step task (original behavior)
+    /// This preserves Symphony's single-shot execution intelligence
     async fn execute_single_step(
         &self,
         task: &str,
         agent_config: &AgentConfig,
         _context: &RuntimeContext,
     ) -> AriaResult<ToolResult> {
-        let system_prompt = self.build_system_prompt(agent_config);
+        let system_prompt = self.system_prompt_service.generate_system_prompt(agent_config, !agent_config.tools.is_empty());
         let has_tools = !agent_config.tools.is_empty();
 
         let messages = vec![
@@ -535,53 +542,6 @@ impl ExecutionEngine {
             ErrorSeverity::Medium,
             "LLM response did not specify a valid tool or response"
         ))
-    }
-
-    /// Build system prompt for agent
-    fn build_system_prompt(&self, agent_config: &AgentConfig) -> String {
-        let mut prompt = agent_config.system_prompt.clone()
-            .unwrap_or_else(|| "You are a helpful AI assistant.".to_string());
-
-        if !agent_config.tools.is_empty() {
-            prompt.push_str(&format!(
-                "\n\nYou have access to the following tools: {}\n\n",
-                agent_config.tools.join(", ")
-            ));
-            
-            prompt.push_str("--- BEGIN SDK JSON REQUIREMENTS ---\n");
-            prompt.push_str("YOUR ENTIRE RESPONSE MUST BE A SINGLE VALID JSON OBJECT.\n");
-            prompt.push_str("TO USE A TOOL: your JSON object MUST contain a \"tool_name\" (string) key AND a \"parameters\" (object) key.\n");
-            prompt.push_str("IF NO TOOL IS NEEDED: your JSON object MUST contain a \"tool_name\" (string) key set EXPLICITLY to \"none\", AND a \"response\" (string) key with your direct textual answer.\n");
-            prompt.push_str("FAILURE TO ADHERE TO THIS JSON STRUCTURE WILL RESULT IN AN ERROR.\n");
-            prompt.push_str("--- END SDK JSON REQUIREMENTS ---");
-        }
-
-        if let Some(directives) = &agent_config.directives {
-            prompt.push_str(&format!("\n\nAdditional Directives:\n{}", directives));
-        }
-
-        prompt
-    }
-
-    /// Build orchestration prompt for multi-tool workflows
-    fn build_orchestration_prompt(&self, task: &str, agent_config: &AgentConfig) -> String {
-        let mut prompt = self.build_system_prompt(agent_config);
-        
-        prompt.push_str(&format!(
-            "\n\n--- ORCHESTRATION MODE ---\n\
-            You are executing a multi-step task that requires using multiple tools in sequence.\n\n\
-            IMPORTANT ORCHESTRATION RULES:\n\
-            1. Analyze the full task and identify ALL required steps\n\
-            2. Execute ONE tool at a time, in logical order\n\
-            3. After each tool execution, I will provide you the result\n\
-            4. Continue with the next tool based on the previous results\n\
-            5. When all required tools have been executed, respond with \"tool_name\": \"none\" and provide final synthesis\n\n\
-            Your task: {}\n\n\
-            Start with the FIRST tool needed for this task.", 
-            task
-        ));
-
-        prompt
     }
 
     /// Recursive function to traverse and resolve placeholders
@@ -824,10 +784,4 @@ pub struct OrchestrationStepResult {
     pub error: Option<String>,
 }
 
-/// Trait for tool registry integration
-#[async_trait]
-pub trait ToolRegistryInterface: Send + Sync {
-    async fn execute_tool(&self, name: &str, parameters: Value) -> AriaResult<ToolResult>;
-    async fn get_tool_info(&self, name: &str) -> AriaResult<Option<RegistryEntry>>;
-    async fn list_available_tools(&self) -> AriaResult<Vec<String>>;
-} 
+ 

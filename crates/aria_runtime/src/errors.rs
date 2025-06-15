@@ -134,6 +134,7 @@ pub enum ErrorCode {
     AuthorizationFailed,
     SecurityViolation,
     InputValidationFailed,
+    InvalidParameters,
     
     // ICC Errors
     ICCServerStartFailed,
@@ -225,6 +226,7 @@ impl fmt::Display for ErrorCode {
             ErrorCode::AuthorizationFailed => write!(f, "AUTHORIZATION_FAILED"),
             ErrorCode::SecurityViolation => write!(f, "SECURITY_VIOLATION"),
             ErrorCode::InputValidationFailed => write!(f, "INPUT_VALIDATION_FAILED"),
+            ErrorCode::InvalidParameters => write!(f, "INVALID_PARAMETERS"),
             
             ErrorCode::ICCServerStartFailed => write!(f, "ICC_SERVER_START_FAILED"),
             ErrorCode::ICCConnectionFailed => write!(f, "ICC_CONNECTION_FAILED"),

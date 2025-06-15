@@ -13,9 +13,12 @@ pub mod context;
 pub mod registry;
 pub mod container;
 pub mod icc;
+pub mod tool_registry;
+pub mod system_prompt;
 
 // Re-export key types and traits for external use
-pub use execution::{ExecutionEngine, ToolRegistryInterface, OrchestrationStepResult};
+pub use execution::{ExecutionEngine, OrchestrationStepResult};
+pub use tool_registry::{ToolRegistry, ToolRegistryInterface};
 pub use llm::{LLMHandler, LLMProvider, OpenAIProvider, AnthropicProvider, LLMHandlerInterface};
 
 /// Factory for creating engine instances
@@ -31,9 +34,8 @@ impl EngineFactory {
                 .with_retry_attempts(3)
         );
 
-        // TODO: Create tool registry implementation
-        // For now, we'll create a mock registry
-        let tool_registry = Box::new(MockToolRegistry::new());
+        // Create production tool registry
+        let tool_registry = std::sync::Arc::new(ToolRegistry::new(None));
 
         // TODO: Create container manager if enabled
         let container_manager = if config.container_execution_enabled {
@@ -364,6 +366,9 @@ impl PlanningEngineInterface for MockPlanningEngine {
                 disk_mb: 10,
                 network_bandwidth_kbps: None,
                 container_count: 0,
+                cpu_cores: Some(1),
+                timeout_seconds: Some(30),
+                max_concurrent: Some(1),
             },
         })
     }
@@ -469,12 +474,12 @@ impl ContextManagerInterface for MockContextManager {
         Ok(RuntimeContext {
             session_id: uuid::Uuid::new_v4(),
             agent_config: AgentConfig {
-                name: "mock".to_string(),
+                name: "system_agent".to_string(),
                 tools: vec![],
                 agents: vec![],
                 llm: LLMConfig {
-                    provider: "mock".to_string(),
-                    model: "mock".to_string(),
+                    provider: "openai".to_string(),
+                    model: "gpt-4o-mini".to_string(),
                     api_key: None,
                     temperature: Some(0.7),
                     max_tokens: Some(1000),
@@ -485,6 +490,9 @@ impl ContextManagerInterface for MockContextManager {
                 max_iterations: None,
                 timeout_ms: None,
                 memory_limit: None,
+                agent_type: Some("system".to_string()),
+                capabilities: vec![],
+                memory_enabled: Some(false),
             },
             created_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
             conversation: None,

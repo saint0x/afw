@@ -44,6 +44,9 @@ impl Orchestrator {
             max_iterations: None,
             timeout_ms: None,
             memory_limit: None,
+            agent_type: Some("default".to_string()),
+            capabilities: vec![],
+            memory_enabled: Some(false),
         };
         let result = self.runtime.execute(task, &agent_config, None).await?;
         Ok(result.result.unwrap_or_default())

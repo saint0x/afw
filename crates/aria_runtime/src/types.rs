@@ -305,6 +305,9 @@ pub struct AgentConfig {
     pub max_iterations: Option<u32>,
     pub timeout_ms: Option<u64>,
     pub memory_limit: Option<u64>,
+    pub agent_type: Option<String>,
+    pub capabilities: Vec<String>,
+    pub memory_enabled: Option<bool>,
 }
 
 // ==========================================
@@ -377,6 +380,10 @@ pub struct ResourceRequirements {
     pub disk_mb: u64,
     pub network_bandwidth_kbps: Option<u32>,
     pub container_count: u32,
+    // Additional fields for tool registry compatibility
+    pub cpu_cores: Option<u32>,
+    pub timeout_seconds: Option<u64>,
+    pub max_concurrent: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
