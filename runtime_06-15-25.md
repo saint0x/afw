@@ -1,28 +1,21 @@
 # Jockey Image
 
-Generated: 06-15-2025 at 11:27:44
+Generated: 06-15-2025 at 13:46:01
 
 ## Repository Structure
 
 ```
 runtime
-│   ├── engines
-│       └── PlanningEngine.ts
-│   ├── SymphonyRuntime.ts
-│   ├── context
-│   │   ├── RuntimeContextManager.ts
-│       └── ExecutionState.ts
-│   ├── context.ts
-│   ├── symphony.ts
 │   ├── conversation
 │       └── ConversationManager.ts
+│   ├── symphony.ts
+│   ├── engines
+│       └── ReflectionEngine.ts
+│   ├── context
+│   │   ├── ExecutionState.ts
+│       └── RuntimeContextManager.ts
+│   ├── context.ts
     └── types.ts
-```
-
-## File: /Users/deepsaint/Desktop/symphony-sdk/src/runtime/SymphonyRuntime.ts
-
-```ts
- 
 ```
 
 ## File: /Users/deepsaint/Desktop/symphony-sdk/src/runtime/context/ExecutionState.ts

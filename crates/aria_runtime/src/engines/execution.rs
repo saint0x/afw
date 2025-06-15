@@ -310,21 +310,18 @@ impl ExecutionEngine {
     ) -> AriaResult<OrchestrationStepResult> {
         let llm_request = LLMRequest {
             messages: conversation_history.to_vec(),
-            provider: None,
-            model: Some(agent_config.llm.model.clone()),
-            temperature: Some(agent_config.llm.temperature.unwrap_or(0.7)),
-            max_tokens: Some(agent_config.llm.max_tokens.unwrap_or(2000)),
-            stream: false,
-            tools: None,
             config: crate::engines::llm::types::LLMConfig {
-                model: agent_config.llm.model.clone(),
+                model: Some(agent_config.llm.model.clone()),
                 temperature: agent_config.llm.temperature.unwrap_or(0.7),
                 max_tokens: agent_config.llm.max_tokens.unwrap_or(2000),
                 top_p: None,
-                stop_sequences: None,
-                stream: false,
+                frequency_penalty: None,
+                presence_penalty: None,
             },
-            expects_json: true,
+            provider: None,
+            tools: None,
+            tool_choice: None,
+            stream: Some(false),
         };
 
         let llm_response = self.llm_handler.complete(llm_request).await?;
@@ -425,21 +422,18 @@ impl ExecutionEngine {
 
         let llm_request = LLMRequest {
             messages,
-            provider: None,
-            model: Some(agent_config.llm.model.clone()),
-            temperature: Some(agent_config.llm.temperature.unwrap_or(0.7)),
-            max_tokens: Some(agent_config.llm.max_tokens.unwrap_or(2000)),
-            stream: false,
-            tools: None,
             config: crate::engines::llm::types::LLMConfig {
-                model: agent_config.llm.model.clone(),
+                model: Some(agent_config.llm.model.clone()),
                 temperature: agent_config.llm.temperature.unwrap_or(0.7),
                 max_tokens: agent_config.llm.max_tokens.unwrap_or(2000),
                 top_p: None,
-                stop_sequences: None,
-                stream: false,
+                frequency_penalty: None,
+                presence_penalty: None,
             },
-            expects_json: has_tools,
+            provider: None,
+            tools: None,
+            tool_choice: None,
+            stream: Some(false),
         };
 
         let llm_response = self.llm_handler.complete(llm_request).await?;

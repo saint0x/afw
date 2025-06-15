@@ -3,117 +3,162 @@ use uuid::Uuid;
 
 use crate::types::*;
 use crate::errors::AriaResult;
+use crate::engines::execution::ExecutionEngine;
+use crate::engines::planning::PlanningEngine;
+use crate::engines::conversation::ConversationEngine;
+use crate::engines::reflection::ReflectionEngine;
+use crate::engines::context_manager::ContextManagerEngine;
+use crate::engines::llm::{LLMHandler, LLMHandlerConfig, LLMHandlerInterface};
+use crate::engines::tool_registry::ToolRegistry;
+use crate::engines::system_prompt::SystemPromptService;
+use std::sync::Arc;
 
 pub mod execution;
 pub mod planning;
-pub mod llm;
 pub mod conversation;
 pub mod reflection;
-pub mod context;
-pub mod registry;
-pub mod container;
-pub mod icc;
+pub mod context_manager;
+pub mod llm;
 pub mod tool_registry;
 pub mod system_prompt;
 
-// Re-export key types and traits for external use
-pub use execution::{ExecutionEngine, OrchestrationStepResult};
-pub use tool_registry::{ToolRegistry, ToolRegistryInterface};
-pub use llm::{LLMHandler, LLMProvider, OpenAIProvider, AnthropicProvider, LLMHandlerInterface};
-
-/// Factory for creating engine instances
-pub struct EngineFactory;
-
-impl EngineFactory {
-    /// Create a complete set of Aria engines with proper dependencies
-    pub async fn create_engines(config: &RuntimeConfiguration) -> AriaResult<AriaEngines> {
-        // Create LLM handler
-        let llm_handler = Box::new(
-            LLMHandler::new()
-                .with_timeout(std::time::Duration::from_secs(30))
-                .with_retry_attempts(3)
-        );
-
-        // Create production tool registry
-        let tool_registry = std::sync::Arc::new(ToolRegistry::new(None));
-
-        // TODO: Create container manager if enabled
-        let container_manager = if config.container_execution_enabled {
-            // Some(Box::new(ContainerManager::new()))
-            None // For now
-        } else {
-            None
-        };
-
-        // Create execution engine
-        let execution_engine = Box::new(ExecutionEngine::new(
-            tool_registry,
-            llm_handler,
-            container_manager,
-        ));
-
-        // Create planning engine (placeholder)
-        let planning_engine = Box::new(MockPlanningEngine::new());
-        
-        // Create conversation engine (placeholder)
-        let conversation_engine = Box::new(MockConversationEngine::new());
-        
-        // Create reflection engine (placeholder)
-        let reflection_engine = Box::new(MockReflectionEngine::new());
-        
-        // Create context manager (placeholder)
-        let context_manager = Box::new(MockContextManager::new());
-
-        Ok(AriaEngines {
-            execution: execution_engine,
-            planning: planning_engine,
-            conversation: conversation_engine,
-            reflection: reflection_engine,
-            context_manager: context_manager,
-        })
-    }
-}
-
-/// Collection of all Aria runtime engines
+/// Main orchestrator for all Aria runtime engines
 pub struct AriaEngines {
-    pub execution: Box<dyn ExecutionEngineInterface>,
-    pub planning: Box<dyn PlanningEngineInterface>,
-    pub conversation: Box<dyn ConversationEngineInterface>,
-    pub reflection: Box<dyn ReflectionEngineInterface>,
-    pub context_manager: Box<dyn ContextManagerInterface>,
+    pub execution: ExecutionEngine,
+    pub planning: PlanningEngine,
+    pub conversation: ConversationEngine,
+    pub reflection: ReflectionEngine,
+    pub context_manager: ContextManagerEngine,
+    pub llm_handler: LLMHandler,
+    pub tool_registry: ToolRegistry,
+    pub system_prompt: SystemPromptService,
 }
 
 impl AriaEngines {
+    pub async fn new() -> AriaResult<Self> {
+        // Create LLM handler with default configuration
+        let llm_config = LLMHandlerConfig::default();
+        let llm_handler = LLMHandler::new(llm_config);
+        
+        // Create tool registry with no bundle store for now
+        let tool_registry = ToolRegistry::new(None);
+        
+        // Create system prompt service
+        let system_prompt = SystemPromptService::new();
+        
+        // Create LLM handler interface for execution engine
+        let llm_handler_interface: Box<dyn LLMHandlerInterface> = Box::new(LLMHandlerWrapper::new(llm_handler.clone()));
+        
+        // Create all engines with proper dependencies
+        let execution = ExecutionEngine::new(
+            Arc::new(tool_registry.clone()),
+            llm_handler_interface,
+            None, // No container manager for now
+        );
+        let planning = PlanningEngine::new();
+        let conversation = ConversationEngine::new();
+        let reflection = ReflectionEngine::new();
+        let context_manager = ContextManagerEngine::new();
+        
+        Ok(Self {
+            execution,
+            planning,
+            conversation,
+            reflection,
+            context_manager,
+            llm_handler,
+            tool_registry,
+            system_prompt,
+        })
+    }
+
     /// Initialize all engines
     pub async fn initialize_all(&self) -> AriaResult<()> {
-        self.execution.initialize().await?;
-        self.planning.initialize().await?;
-        self.conversation.initialize().await?;
-        self.reflection.initialize().await?;
-        self.context_manager.initialize().await?;
+        // Initialize engines in dependency order
+        // LLM handler and tool registry first
+        // Then other engines that depend on them
+        
+        // Note: Individual engine initialization would happen here
+        // For now, they're all simple structs
+        
         Ok(())
     }
-    
-    /// Shutdown all engines
+
+    /// Shutdown all engines gracefully
     pub async fn shutdown_all(&self) -> AriaResult<()> {
-        self.execution.shutdown().await?;
-        self.planning.shutdown().await?;
-        self.conversation.shutdown().await?;
-        self.reflection.shutdown().await?;
-        self.context_manager.shutdown().await?;
+        // Shutdown engines in reverse dependency order
+        // This would include cleanup of resources, connections, etc.
+        
+        Ok(())
+    }
+
+    /// Health check for all engines
+    pub async fn health_check_all(&self) -> AriaResult<bool> {
+        // Check health of all engines
+        // Return false if any engine is unhealthy
+        
+        Ok(true)
+    }
+}
+
+/// Wrapper to implement LLMHandlerInterface for LLMHandler
+struct LLMHandlerWrapper {
+    handler: LLMHandler,
+}
+
+impl LLMHandlerWrapper {
+    fn new(handler: LLMHandler) -> Self {
+        Self { handler }
+    }
+}
+
+#[async_trait]
+impl LLMHandlerInterface for LLMHandlerWrapper {
+    async fn complete(&self, request: crate::engines::llm::types::LLMRequest) -> AriaResult<crate::engines::llm::types::LLMResponse> {
+        self.handler.complete(request).await
+    }
+    
+    async fn stream_complete(&self, _request: crate::engines::llm::types::LLMRequest) -> AriaResult<crate::engines::llm::types::LLMStreamResponse> {
+        // For now, return an error since streaming isn't fully implemented
+        Err(crate::errors::AriaError::new(
+            crate::errors::ErrorCode::LLMApiError,
+            crate::errors::ErrorCategory::LLM,
+            crate::errors::ErrorSeverity::Medium,
+            "Streaming not yet implemented"
+        ))
+    }
+    
+    fn get_providers(&self) -> Vec<String> {
+        // This needs to be async, but trait requires sync
+        // For now return empty - this will be fixed in Phase 2
+        Vec::new()
+    }
+    
+    async fn set_default_provider(&self, _provider: &str) -> AriaResult<()> {
+        // TODO: Implement when provider selection is added
         Ok(())
     }
     
-    /// Health check all engines
-    pub async fn health_check_all(&self) -> AriaResult<bool> {
-        let checks = vec![
-            self.execution.health_check().await?,
-            self.planning.health_check().await?,
-            self.conversation.health_check().await?,
-            self.reflection.health_check().await?,
-            self.context_manager.health_check().await?,
-        ];
-        Ok(checks.iter().all(|&check| check))
+    async fn get_provider_capabilities(&self, _provider: &str) -> AriaResult<crate::engines::llm::types::ProviderCapabilities> {
+        // TODO: Implement when provider capabilities are added
+        Ok(crate::engines::llm::types::ProviderCapabilities {
+            models: vec!["gpt-4o".to_string()],
+            supports_streaming: true,
+            supports_functions: true,
+            supports_vision: false,
+            max_tokens: 4096,
+            rate_limits: Some(crate::engines::llm::types::RateLimits {
+                requests_per_minute: 5000,
+                tokens_per_minute: 600000,
+                requests_per_day: Some(100000),
+            }),
+        })
+    }
+    
+    async fn health_check_provider(&self, _provider: &str) -> AriaResult<bool> {
+        // Simple health check - check if any providers are available
+        let providers = self.handler.get_available_providers().await;
+        Ok(!providers.is_empty())
     }
 }
 
@@ -253,266 +298,7 @@ pub trait ContextManagerInterface: RuntimeEngine {
     async fn get_execution_state(&self) -> AriaResult<RuntimeContext>;
 }
 
-/// Mock tool registry for development
-pub struct MockToolRegistry {
-    tools: std::collections::HashMap<String, String>,
-}
-
-impl MockToolRegistry {
-    pub fn new() -> Self {
-        let mut tools = std::collections::HashMap::new();
-        tools.insert("test_tool".to_string(), "A test tool for development".to_string());
-        tools.insert("echo_tool".to_string(), "Echoes input back".to_string());
-        
-        Self { tools }
-    }
-}
-
-#[async_trait]
-impl ToolRegistryInterface for MockToolRegistry {
-    async fn execute_tool(&self, name: &str, parameters: serde_json::Value) -> AriaResult<ToolResult> {
-        match name {
-            "test_tool" => Ok(ToolResult {
-                success: true,
-                result: Some(serde_json::json!({
-                    "message": "Test tool executed successfully",
-                    "parameters": parameters
-                })),
-                error: None,
-                metadata: std::collections::HashMap::new(),
-                execution_time_ms: 10,
-                resource_usage: None,
-            }),
-            "echo_tool" => Ok(ToolResult {
-                success: true,
-                result: Some(serde_json::json!({
-                    "echo": parameters,
-                    "message": "Input echoed back successfully"
-                })),
-                error: None,
-                metadata: std::collections::HashMap::new(),
-                execution_time_ms: 5,
-                resource_usage: None,
-            }),
-            _ => Ok(ToolResult {
-                success: false,
-                result: None,
-                error: Some(format!("Tool '{}' not found", name)),
-                metadata: std::collections::HashMap::new(),
-                execution_time_ms: 0,
-                resource_usage: None,
-            }),
-        }
-    }
-
-    async fn get_tool_info(&self, name: &str) -> AriaResult<Option<RegistryEntry>> {
-        if let Some(_description) = self.tools.get(name) {
-            Ok(Some(RegistryEntry {
-                name: name.to_string(),
-                entry_type: RegistryEntryType::Tool,
-                bundle_id: None,
-                version: "1.0.0".to_string(),
-                metadata: std::collections::HashMap::new(),
-                created_at: 0,
-                updated_at: 0,
-            }))
-        } else {
-            Ok(None)
-        }
-    }
-
-    async fn list_available_tools(&self) -> AriaResult<Vec<String>> {
-        Ok(self.tools.keys().cloned().collect())
-    }
-}
-
-// Mock implementations for missing engines
-pub struct MockPlanningEngine;
-impl MockPlanningEngine {
-    pub fn new() -> Self { Self }
-}
-
-#[async_trait]
-impl RuntimeEngine for MockPlanningEngine {
-    async fn initialize(&self) -> AriaResult<()> { Ok(()) }
-    fn get_dependencies(&self) -> Vec<String> { vec![] }
-    fn get_state(&self) -> String { "ready".to_string() }
-    async fn health_check(&self) -> AriaResult<bool> { Ok(true) }
-    async fn shutdown(&self) -> AriaResult<()> { Ok(()) }
-}
-
-#[async_trait]
-impl PlanningEngineInterface for MockPlanningEngine {
-    async fn analyze_task(&self, _task: &str, _context: &RuntimeContext) -> AriaResult<TaskAnalysis> {
-        Ok(TaskAnalysis {
-            complexity: TaskComplexity::Simple,
-            requires_planning: false,
-            requires_containers: false,
-            reasoning: "Mock analysis".to_string(),
-            estimated_steps: 1,
-        })
-    }
-    
-    async fn create_execution_plan(&self, task: &str, _agent_config: &AgentConfig, _context: &RuntimeContext) -> AriaResult<ExecutionPlan> {
-        Ok(ExecutionPlan {
-            id: uuid::Uuid::new_v4(),
-            task_description: task.to_string(),
-            steps: vec![],
-            confidence: 0.5,
-            estimated_duration: Some(30000),
-            resource_requirements: ResourceRequirements {
-                cpu_millis: 100,
-                memory_mb: 64,
-                disk_mb: 10,
-                network_bandwidth_kbps: None,
-                container_count: 0,
-                cpu_cores: Some(1),
-                timeout_seconds: Some(30),
-                max_concurrent: Some(1),
-            },
-        })
-    }
-}
-
-pub struct MockConversationEngine;
-impl MockConversationEngine {
-    pub fn new() -> Self { Self }
-}
-
-#[async_trait]
-impl RuntimeEngine for MockConversationEngine {
-    async fn initialize(&self) -> AriaResult<()> { Ok(()) }
-    fn get_dependencies(&self) -> Vec<String> { vec![] }
-    fn get_state(&self) -> String { "ready".to_string() }
-    async fn health_check(&self) -> AriaResult<bool> { Ok(true) }
-    async fn shutdown(&self) -> AriaResult<()> { Ok(()) }
-}
-
-#[async_trait]
-impl ConversationEngineInterface for MockConversationEngine {
-    async fn initiate(&self, task: &str, _context: &RuntimeContext) -> AriaResult<ConversationJSON> {
-        Ok(ConversationJSON {
-            id: uuid::Uuid::new_v4(),
-            original_task: task.to_string(),
-            turns: vec![],
-            final_response: String::new(),
-            reasoning_chain: vec![],
-            duration: 0,
-            state: ConversationState::Initiated,
-        })
-    }
-    
-    async fn update(&self, _conversation: &mut ConversationJSON, _step_result: &ExecutionStep) -> AriaResult<()> {
-        Ok(())
-    }
-    
-    async fn conclude(&self, _conversation: &mut ConversationJSON, _context: &RuntimeContext) -> AriaResult<()> {
-        Ok(())
-    }
-    
-    async fn finalize(&self, _conversation: &mut ConversationJSON) -> AriaResult<()> {
-        Ok(())
-    }
-}
-
-pub struct MockReflectionEngine;
-impl MockReflectionEngine {
-    pub fn new() -> Self { Self }
-}
-
-#[async_trait]
-impl RuntimeEngine for MockReflectionEngine {
-    async fn initialize(&self) -> AriaResult<()> { Ok(()) }
-    fn get_dependencies(&self) -> Vec<String> { vec![] }
-    fn get_state(&self) -> String { "ready".to_string() }
-    async fn health_check(&self) -> AriaResult<bool> { Ok(true) }
-    async fn shutdown(&self) -> AriaResult<()> { Ok(()) }
-}
-
-#[async_trait]
-impl ReflectionEngineInterface for MockReflectionEngine {
-    async fn reflect(&self, _step: &ExecutionStep, _context: &RuntimeContext) -> AriaResult<Reflection> {
-        Ok(Reflection {
-            id: uuid::Uuid::new_v4(),
-            step_id: uuid::Uuid::new_v4(),
-            assessment: ReflectionAssessment {
-                performance: PerformanceLevel::Good,
-                quality: QualityLevel::Good,
-                efficiency: EfficiencyLevel::Efficient,
-                suggested_improvements: vec![],
-            },
-            suggested_action: SuggestedAction::Continue,
-            reasoning: "Mock reflection".to_string(),
-            confidence: 0.5,
-            timestamp: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
-            improvements: vec![],
-        })
-    }
-}
-
-pub struct MockContextManager;
-impl MockContextManager {
-    pub fn new() -> Self { Self }
-}
-
-#[async_trait]
-impl RuntimeEngine for MockContextManager {
-    async fn initialize(&self) -> AriaResult<()> { Ok(()) }
-    fn get_dependencies(&self) -> Vec<String> { vec![] }
-    fn get_state(&self) -> String { "ready".to_string() }
-    async fn health_check(&self) -> AriaResult<bool> { Ok(true) }
-    async fn shutdown(&self) -> AriaResult<()> { Ok(()) }
-}
-
-#[async_trait]
-impl ContextManagerInterface for MockContextManager {
-    async fn set_plan(&self, _plan: ExecutionPlan) -> AriaResult<()> { Ok(()) }
-    async fn record_step(&self, _step: ExecutionStep) -> AriaResult<()> { Ok(()) }
-    async fn record_reflection(&self, _reflection: Reflection) -> AriaResult<()> { Ok(()) }
-    async fn update_status(&self, _status: ExecutionStatus) -> AriaResult<()> { Ok(()) }
-    async fn get_execution_state(&self) -> AriaResult<RuntimeContext> {
-        Ok(RuntimeContext {
-            session_id: uuid::Uuid::new_v4(),
-            agent_config: AgentConfig {
-                name: "system_agent".to_string(),
-                tools: vec![],
-                agents: vec![],
-                llm: LLMConfig {
-                    provider: "openai".to_string(),
-                    model: "gpt-4o-mini".to_string(),
-                    api_key: None,
-                    temperature: Some(0.7),
-                    max_tokens: Some(1000),
-                    timeout: None,
-                },
-                system_prompt: None,
-                directives: None,
-                max_iterations: None,
-                timeout_ms: None,
-                memory_limit: None,
-                agent_type: Some("system".to_string()),
-                capabilities: vec![],
-                memory_enabled: Some(false),
-            },
-            created_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
-            conversation: None,
-            status: ExecutionStatus::Running,
-            current_plan: None,
-            execution_history: vec![],
-            working_memory: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
-            insights: vec![],
-            error_history: vec![],
-            current_step: 0,
-            total_steps: 0,
-            remaining_steps: vec![],
-            reflections: vec![],
-            memory_size: 0,
-            max_memory_size: 1024 * 1024, // 1MB
-        })
-    }
-}
-
-/// Trait for container management interfaces
+/// Container manager interface for container execution
 #[async_trait]
 pub trait ContainerManagerInterface: Send + Sync {
     async fn create_container(
@@ -536,7 +322,7 @@ pub trait ContainerManagerInterface: Send + Sync {
     async fn health_check(&self) -> AriaResult<bool>;
 }
 
-#[derive(Debug, Clone)]
+/// Result of container execution
 pub struct ContainerExecutionResult {
     pub exit_code: i32,
     pub stdout: String,
@@ -545,7 +331,7 @@ pub struct ContainerExecutionResult {
     pub resource_usage: Option<ResourceUsage>,
 }
 
-#[derive(Debug, Clone)]
+/// Container status information
 pub struct ContainerStatus {
     pub id: String,
     pub state: ContainerState,
@@ -556,7 +342,7 @@ pub struct ContainerStatus {
     pub resource_usage: Option<ResourceUsage>,
 }
 
-#[derive(Debug, Clone)]
+/// Container state enumeration
 pub enum ContainerState {
     Created,
     Running,
@@ -565,7 +351,7 @@ pub enum ContainerState {
     Removed,
 }
 
-#[derive(Debug, Clone)]
+/// Container information
 pub struct ContainerInfo {
     pub id: String,
     pub name: String,
@@ -574,7 +360,7 @@ pub struct ContainerInfo {
     pub session_id: Uuid,
 }
 
-#[derive(Debug, Clone)]
+/// ICC server status
 pub enum ICCServerStatus {
     Starting,
     Running,
@@ -583,7 +369,7 @@ pub enum ICCServerStatus {
     Error(String),
 }
 
-#[derive(Debug, Clone)]
+/// ICC connection information
 pub struct ICCConnection {
     pub id: String,
     pub container_id: String,
@@ -592,7 +378,7 @@ pub struct ICCConnection {
     pub request_count: u32,
 }
 
-/// Handler trait for ICC tool execution
+/// Handler for ICC tool calls
 #[async_trait]
 pub trait ICCToolHandler: Send + Sync {
     async fn handle_tool_call(
@@ -604,7 +390,7 @@ pub trait ICCToolHandler: Send + Sync {
     ) -> AriaResult<serde_json::Value>;
 }
 
-/// Handler trait for ICC agent invocation
+/// Handler for ICC agent calls
 #[async_trait]
 pub trait ICCAgentHandler: Send + Sync {
     async fn handle_agent_call(

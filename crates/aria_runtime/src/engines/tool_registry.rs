@@ -7,6 +7,7 @@ use tokio::sync::RwLock;
 use serde_json::Value;
 
 /// Production-grade tool registry that manages tool loading, validation, and execution
+#[derive(Clone)]
 pub struct ToolRegistry {
     /// Registered tools indexed by name
     tools: Arc<RwLock<HashMap<String, RegistryEntry>>>,
