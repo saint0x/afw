@@ -15,12 +15,12 @@ impl VectorCache {
         Ok(Self {})
     }
 
-    pub async fn store_vector(&self, id: &str, vector: Vec<f32>) -> AriaResult<()> {
+    pub async fn store_vector(&self, _id: &str, _vector: Vec<f32>) -> AriaResult<()> {
         // TODO: Store vector and update index
         Ok(())
     }
 
-    pub async fn search(&self, query_vector: Vec<f32>, limit: usize) -> AriaResult<Vec<String>> {
+    pub async fn search(&self, _query_vector: Vec<f32>, _limit: usize) -> AriaResult<Vec<String>> {
         // TODO: Perform similarity search
         Ok(vec![])
     }

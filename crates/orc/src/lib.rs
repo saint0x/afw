@@ -6,7 +6,9 @@ It wraps the aria_runtime and integrates with the token_api for Quilt communicat
 */
 
 use aria_runtime::{AriaRuntime, RuntimeConfig, AriaResult};
-use token_api::{TokenApi, TokenResult};
+use aria_runtime::errors::{AriaError, ErrorCode, ErrorCategory, ErrorSeverity};
+use aria_runtime::types::AgentConfig;
+use token_api::TokenApi;
 
 pub struct Orchestrator {
     runtime: AriaRuntime,
@@ -14,18 +16,14 @@ pub struct Orchestrator {
 }
 
 impl Orchestrator {
-    pub async fn new(config: RuntimeConfig) -> AriaResult<Self> {
-        let runtime = AriaRuntime::new(config).await?;
-        let token_api = TokenApi::new().await
-            .map_err(|e| aria_runtime::AriaError::Quilt { 
-                message: e.to_string(), 
-                token: None 
-            })?;
-        
-        Ok(Self {
-            runtime,
-            token_api,
-        })
+    pub async fn new(_config: RuntimeConfig) -> AriaResult<Self> {
+        // TODO: For now, return an error since engines are not implemented yet
+        Err(AriaError::new(
+            ErrorCode::InitializationFailed,
+            ErrorCategory::System,
+            ErrorSeverity::High,
+            "Orchestrator requires AriaEngines implementation"
+        ).with_component("Orchestrator").with_operation("new"))
     }
 
     pub async fn execute_task(&self, task: &str) -> AriaResult<serde_json::Value> {
@@ -35,7 +33,19 @@ impl Orchestrator {
         // 3. Execute task with resource isolation
         // 4. Return results
         
-        let result = self.runtime.execute(task).await?;
+        // TODO: Implement proper task execution with agent config
+        let agent_config = AgentConfig {
+            name: "default".to_string(),
+            system_prompt: None,
+            directives: None,
+            tools: vec![],
+            agents: vec![],
+            llm: Default::default(),
+            max_iterations: None,
+            timeout_ms: None,
+            memory_limit: None,
+        };
+        let result = self.runtime.execute(task, &agent_config, None).await?;
         Ok(result.result.unwrap_or_default())
     }
 } 

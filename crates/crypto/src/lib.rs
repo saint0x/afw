@@ -15,7 +15,7 @@ impl CryptoUtils {
         format!("hash_{}", data.len())
     }
 
-    pub fn verify_signature(data: &[u8], signature: &[u8], public_key: &[u8]) -> AriaResult<bool> {
+    pub fn verify_signature(_data: &[u8], _signature: &[u8], _public_key: &[u8]) -> AriaResult<bool> {
         // TODO: Use ed25519-dalek for signature verification
         Ok(true)
     }

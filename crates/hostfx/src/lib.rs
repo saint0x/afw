@@ -16,17 +16,17 @@ impl HostFunctions {
         Ok(Self {})
     }
 
-    pub async fn call_llm(&self, prompt: &str) -> AriaResult<String> {
+    pub async fn call_llm(&self, _prompt: &str) -> AriaResult<String> {
         // TODO: Make LLM API call
         Ok("LLM response placeholder".to_string())
     }
 
-    pub async fn gpu_compute(&self, task: &str) -> AriaResult<serde_json::Value> {
+    pub async fn gpu_compute(&self, _task: &str) -> AriaResult<serde_json::Value> {
         // TODO: Schedule GPU computation
         Ok(serde_json::json!({"result": "GPU computation placeholder"}))
     }
 
-    pub async fn network_request(&self, url: &str) -> AriaResult<String> {
+    pub async fn network_request(&self, _url: &str) -> AriaResult<String> {
         // TODO: Make HTTP request
         Ok("Network response placeholder".to_string())
     }

@@ -51,10 +51,12 @@ impl MemorySystem {
         match memory_type {
             "short_term" => { self.short_term.insert(key.to_string(), entry); },
             "long_term" => { self.long_term.insert(key.to_string(), entry); },
-            _ => return Err(crate::errors::AriaError::Memory { 
-                message: "Invalid memory type".to_string(), 
-                operation: Some("store".to_string()) 
-            }),
+            _ => return Err(crate::errors::AriaError::new(
+                crate::errors::ErrorCode::ContextInitializationFailed,
+                crate::errors::ErrorCategory::Context,
+                crate::errors::ErrorSeverity::Medium,
+                "Invalid memory type"
+            ).with_component("MemorySystem").with_operation("store")),
         }
 
         Ok(())
@@ -64,10 +66,12 @@ impl MemorySystem {
         let entry = match memory_type {
             "short_term" => self.short_term.get(key),
             "long_term" => self.long_term.get(key),
-            _ => return Err(crate::errors::AriaError::Memory { 
-                message: "Invalid memory type".to_string(), 
-                operation: Some("retrieve".to_string()) 
-            }),
+            _ => return Err(crate::errors::AriaError::new(
+                crate::errors::ErrorCode::ContextInitializationFailed,
+                crate::errors::ErrorCategory::Context,
+                crate::errors::ErrorSeverity::Medium,
+                "Invalid memory type"
+            ).with_component("MemorySystem").with_operation("retrieve")),
         };
 
         Ok(entry.map(|e| e.value.clone()))

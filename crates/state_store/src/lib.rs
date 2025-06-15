@@ -5,7 +5,7 @@ Custom key-value store implementation with in-memory storage and planned disk pe
 We'll implement our own storage layer without heavy dependencies.
 */
 
-use serde::{Deserialize, Serialize};
+
 use std::collections::HashMap;
 
 /// Result type for state store operations

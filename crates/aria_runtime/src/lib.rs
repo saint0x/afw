@@ -31,6 +31,7 @@ pub mod cache;
 pub mod context;
 pub mod errors;
 pub mod types;
+pub mod engines;
 
 // Re-export main components
 pub use runtime::{AriaRuntime, RuntimeConfig, RuntimeResult};
@@ -44,16 +45,29 @@ pub use cache::{CacheIntelligence, CacheConfig};
 pub use context::{ContextManager, ExecutionContext};
 pub use errors::{AriaError, AriaResult};
 pub use types::{TaskComplexity, TeamStrategy, LLMConfig, ExecutionMetrics, Priority}; // Direct export from types
+pub use engines::AriaEngines;
 
 /// Runtime version
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const RUNTIME_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Initialize the Aria Runtime with default configuration
-pub async fn init() -> AriaResult<AriaRuntime> {
-    AriaRuntime::new(RuntimeConfig::default()).await
+/// Create a new Aria Runtime with default configuration
+pub async fn create_aria_runtime_default() -> AriaResult<AriaRuntime> {
+    // For now, this is not implemented since we need actual engine implementations
+    Err(AriaError::new(
+        errors::ErrorCode::InitializationFailed,
+        errors::ErrorCategory::System,
+        errors::ErrorSeverity::Critical,
+        "Engine factory not yet implemented - runtime creation not available",
+    ))
 }
 
-/// Initialize the Aria Runtime with custom configuration
-pub async fn init_with_config(config: RuntimeConfig) -> AriaResult<AriaRuntime> {
-    AriaRuntime::new(config).await
+/// Create a new Aria Runtime with custom configuration
+pub async fn create_aria_runtime(_config: RuntimeConfig) -> AriaResult<AriaRuntime> {
+    // For now, this is not implemented since we need actual engine implementations
+    Err(AriaError::new(
+        errors::ErrorCode::InitializationFailed,
+        errors::ErrorCategory::System,
+        errors::ErrorSeverity::Critical,
+        "Engine factory not yet implemented - runtime creation not available",
+    ))
 } 

@@ -5,7 +5,7 @@ Content-addressed storage and verification for .aria bundles.
 Handles signature verification and bundle management with custom storage.
 */
 
-use serde::{Deserialize, Serialize};
+
 use std::collections::HashMap;
 
 /// Result type for package store operations
@@ -49,7 +49,7 @@ impl PackageStore {
         Ok(self.bundles.get(bundle_hash).cloned())
     }
 
-    pub async fn verify_bundle(&self, bundle_data: &[u8]) -> PkgResult<bool> {
+    pub async fn verify_bundle(&self, _bundle_data: &[u8]) -> PkgResult<bool> {
         // TODO: Verify bundle signature using ed25519-dalek
         Ok(true)
     }

@@ -39,18 +39,18 @@ impl TokenApi {
         Ok(Self {})
     }
 
-    pub async fn request_tokens(&self, tokens: Vec<ResourceToken>) -> TokenResult<String> {
+    pub async fn request_tokens(&self, _tokens: Vec<ResourceToken>) -> TokenResult<String> {
         // TODO: Send token request to Quilt sync-engine
         // TODO: Return execution ID or handle
         Ok("exec_id_placeholder".to_string())
     }
 
-    pub async fn wait_for_completion(&self, exec_id: &str) -> TokenResult<()> {
+    pub async fn wait_for_completion(&self, _exec_id: &str) -> TokenResult<()> {
         // TODO: Wait for Quilt to signal completion
         Ok(())
     }
 
-    pub async fn release_tokens(&self, exec_id: &str) -> TokenResult<()> {
+    pub async fn release_tokens(&self, _exec_id: &str) -> TokenResult<()> {
         // TODO: Release resources back to Quilt
         Ok(())
     }
