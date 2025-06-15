@@ -1,8 +1,8 @@
 use async_trait::async_trait;
-use crate::engines::{ExecutionEngineInterface, RuntimeEngine, ContainerManagerInterface};
-use crate::engines::llm::types::*;
-use crate::engines::llm::LLMHandlerInterface;
-use crate::engines::tool_registry::{ToolRegistry, ToolRegistryInterface};
+use crate::engines::{ExecutionEngineInterface, ContainerManagerInterface, Engine};
+use crate::engines::llm::types::{LLMConfig, LLMMessage, LLMRequest};
+use crate::engines::llm::LLMHandler;
+use crate::engines::tool_registry::ToolRegistryInterface;
 use crate::engines::system_prompt::SystemPromptService;
 use crate::types::*;
 use crate::errors::{AriaResult, AriaError, ErrorCode, ErrorCategory, ErrorSeverity};
@@ -12,28 +12,30 @@ use uuid::Uuid;
 use serde_json::Value;
 use regex::Regex;
 use std::time::{SystemTime, UNIX_EPOCH};
+use crate::deep_size::{DeepUuid, DeepValue};
 
 /// The ExecutionEngine is responsible for the core "magic" of tool execution.
 /// It preserves Symphony's brilliant unconscious tool execution logic while
 /// adding container orchestration capabilities.
 pub struct ExecutionEngine {
-    tool_registry: Arc<ToolRegistry>,
-    llm_handler: Box<dyn LLMHandlerInterface>,
-    container_manager: Option<Box<dyn ContainerManagerInterface>>,
+    tool_registry: Arc<dyn ToolRegistryInterface>,
+    llm_handler: Arc<LLMHandler>,
+    // TODO: Container manager will be concrete type when implemented
+    // container_manager: Option<Arc<dyn ContainerManagerInterface>>,
     system_prompt_service: SystemPromptService,
     max_orchestration_steps: usize,
 }
 
 impl ExecutionEngine {
     pub fn new(
-        tool_registry: Arc<ToolRegistry>,
-        llm_handler: Box<dyn LLMHandlerInterface>,
-        container_manager: Option<Box<dyn ContainerManagerInterface>>,
+        tool_registry: Arc<dyn ToolRegistryInterface>,
+        llm_handler: Arc<LLMHandler>,
+        _container_manager: Option<()>, // Simplified for now
     ) -> Self {
         Self {
             tool_registry,
             llm_handler,
-            container_manager,
+            // container_manager,
             system_prompt_service: SystemPromptService::new(),
             max_orchestration_steps: 5,
         }
@@ -61,26 +63,26 @@ impl ExecutionEngine {
     /// Resolves parameter placeholders from execution history
     pub fn resolve_placeholders(
         &self,
-        parameters: &HashMap<String, Value>,
+        parameters: &HashMap<String, DeepValue>,
         history: &[ExecutionStep],
-    ) -> AriaResult<HashMap<String, Value>> {
+    ) -> AriaResult<HashMap<String, DeepValue>> {
         let mut resolved = parameters.clone();
         
         // Regex patterns for placeholder resolution
         let full_placeholder_regex = Regex::new(r"^\{\{step_(\d+)_output(?:\.(.+))?\}\}$")
             .map_err(|e| AriaError::new(
-                ErrorCode::ParameterResolutionFailed,
+                ErrorCode::ParameterResolutionError,
                 ErrorCategory::Execution,
                 ErrorSeverity::Medium,
-                format!("Failed to compile placeholder regex: {}", e)
+                &format!("Failed to compile placeholder regex: {}", e)
             ))?;
             
         let partial_placeholder_regex = Regex::new(r"\{\{step_(\d+)_output(?:\.(.+))?\}\}")
             .map_err(|e| AriaError::new(
-                ErrorCode::ParameterResolutionFailed,
+                ErrorCode::ParameterResolutionError,
                 ErrorCategory::Execution,
                 ErrorSeverity::Medium,
-                format!("Failed to compile partial placeholder regex: {}", e)
+                &format!("Failed to compile partial placeholder regex: {}", e)
             ))?;
 
         self.traverse_and_resolve(&mut resolved, history, &full_placeholder_regex, &partial_placeholder_regex)?;
@@ -91,10 +93,12 @@ impl ExecutionEngine {
     /// Execute a container workload if container manager is available
     pub async fn execute_container_workload(
         &self,
-        spec: &ContainerSpec,
-        context: &RuntimeContext,
-        session_id: Uuid,
+        _spec: &ContainerSpec,
+        _context: &RuntimeContext,
+        _session_id: DeepUuid,
     ) -> AriaResult<ToolResult> {
+        // TODO: Implement container execution when container manager is ready
+        /*
         if let Some(container_manager) = &self.container_manager {
             // Create context environment variables
             let context_env = self.create_context_environment(context, session_id);
@@ -141,19 +145,28 @@ impl ExecutionEngine {
             }
         } else {
             Err(AriaError::new(
-                ErrorCode::ContainerExecutionFailed,
+                ErrorCode::ContainerError,
                 ErrorCategory::Container,
                 ErrorSeverity::High,
                 "Container manager not available for workload execution"
             ))
         }
+        */
+        
+        // For now, return a placeholder result
+        Err(AriaError::new(
+            ErrorCode::ContainerError,
+            ErrorCategory::Container,
+            ErrorSeverity::High,
+            "Container execution not yet implemented"
+        ))
     }
 
     /// Create context environment variables for container execution
     fn create_context_environment(
         &self,
         context: &RuntimeContext,
-        session_id: Uuid,
+        session_id: DeepUuid,
     ) -> HashMap<String, String> {
         let mut env = HashMap::new();
         
@@ -294,7 +307,7 @@ impl ExecutionEngine {
                     .as_secs(),
                 "tools_executed": all_tool_results,
                 "orchestration_steps": orchestration_step
-            })),
+            }).into()),
             error: primary_error,
             metadata: HashMap::new(),
             execution_time_ms: 0, // TODO: Track execution time
@@ -332,7 +345,7 @@ impl ExecutionEngine {
                 ErrorCode::LLMInvalidResponse,
                 ErrorCategory::LLM,
                 ErrorSeverity::Medium,
-                format!("Invalid JSON response from LLM: {}", e)
+                &format!("Invalid JSON response from LLM: {}", e)
             ))?;
 
         let tool_name = parsed_json.get("tool_name")
@@ -347,7 +360,7 @@ impl ExecutionEngine {
                     // Execute the tool
                     let tool_result = self.tool_registry.execute_tool(
                         tool_name,
-                        parameters.clone(),
+                        parameters.clone().into(),
                     ).await?;
                     
                     return Ok(OrchestrationStepResult {
@@ -450,7 +463,7 @@ impl ExecutionEngine {
                     "reasoning": "Direct LLM response as agent has no tools",
                     "agent": agent_config.name,
                     "model": llm_response.model
-                })),
+                }).into()),
                 error: None,
                 metadata: HashMap::new(),
                 execution_time_ms: 0,
@@ -470,7 +483,7 @@ impl ExecutionEngine {
                 ErrorCode::LLMInvalidResponse,
                 ErrorCategory::LLM,
                 ErrorSeverity::Medium,
-                format!("Failed to parse LLM response as JSON: {}", e)
+                &format!("Failed to parse LLM response as JSON: {}", e)
             ))?;
 
         let tool_name = parsed_json.get("tool_name")
@@ -491,7 +504,7 @@ impl ExecutionEngine {
                         "response": response,
                         "reasoning": "No tool actions taken as per LLM decision",
                         "agent": agent_config.name
-                    })),
+                    }).into()),
                     error: None,
                     metadata: HashMap::new(),
                     execution_time_ms: 0,
@@ -499,7 +512,7 @@ impl ExecutionEngine {
                 });
             } else if let Some(parameters) = parsed_json.get("parameters") {
                 // Execute the specified tool
-                let tool_result = self.tool_registry.execute_tool(tool_name, parameters.clone()).await?;
+                let tool_result = self.tool_registry.execute_tool(tool_name, parameters.clone().into()).await?;
                 
                 let response = if tool_result.success {
                     format!("Tool {} executed successfully. Result: {}", 
@@ -521,7 +534,7 @@ impl ExecutionEngine {
                             "result": tool_result.result,
                             "error": tool_result.error
                         }]
-                    })),
+                    }).into()),
                     error: if tool_result.success { None } else { tool_result.error },
                     metadata: HashMap::new(),
                     execution_time_ms: tool_result.execution_time_ms,
@@ -541,13 +554,13 @@ impl ExecutionEngine {
     /// Recursive function to traverse and resolve placeholders
     fn traverse_and_resolve(
         &self,
-        obj: &mut HashMap<String, Value>,
+        obj: &mut HashMap<String, DeepValue>,
         history: &[ExecutionStep],
         full_regex: &Regex,
         partial_regex: &Regex,
     ) -> AriaResult<()> {
         for (_key, value) in obj.iter_mut() {
-            match value {
+            match &mut value.0 {
                 Value::String(s) => {
                     // Check for full placeholder replacement
                     if let Some(caps) = full_regex.captures(s) {
@@ -564,27 +577,27 @@ impl ExecutionEngine {
                             let property_path = caps.get(2).map(|m| m.as_str());
                             
                             if let Some(resolved_value) = self.resolve_step_output(step_index, property_path, history) {
-                                match resolved_value {
-                                    Value::String(s) => s,
+                                match &resolved_value.0 {
+                                    Value::String(s) => s.clone(),
                                     other => serde_json::to_string(&other).unwrap_or_default(),
                                 }
                             } else {
                                 caps.get(0).unwrap().as_str().to_string()
                             }
                         });
-                        *value = Value::String(resolved_string.to_string());
+                        *value = DeepValue(Value::String(resolved_string.to_string()));
                     }
                 },
                 Value::Object(_nested_obj) => {
-                    if let Ok(mut nested_map) = serde_json::from_value::<HashMap<String, Value>>(value.clone()) {
+                    if let Ok(mut nested_map) = serde_json::from_value::<HashMap<String, DeepValue>>(value.0.clone()) {
                         self.traverse_and_resolve(&mut nested_map, history, full_regex, partial_regex)?;
-                        *value = serde_json::to_value(nested_map).unwrap_or(Value::Null);
+                        *value = serde_json::to_value(nested_map).unwrap_or(Value::Null).into();
                     }
                 },
                 Value::Array(arr) => {
                     for item in arr.iter_mut() {
                         if let Value::Object(_) = item {
-                            if let Ok(mut item_map) = serde_json::from_value::<HashMap<String, Value>>(item.clone()) {
+                            if let Ok(mut item_map) = serde_json::from_value::<HashMap<String, DeepValue>>(item.clone()) {
                                 self.traverse_and_resolve(&mut item_map, history, full_regex, partial_regex)?;
                                 *item = serde_json::to_value(item_map).unwrap_or(Value::Null);
                             }
@@ -603,7 +616,7 @@ impl ExecutionEngine {
         step_index: usize,
         property_path: Option<&str>,
         history: &[ExecutionStep],
-    ) -> Option<Value> {
+    ) -> Option<DeepValue> {
         // Convert 1-based index to 0-based
         let actual_index = step_index.saturating_sub(1);
         
@@ -616,7 +629,7 @@ impl ExecutionEngine {
                         for prop in path.split('.') {
                             if let Some(obj) = current_value.as_object() {
                                 if let Some(next_value) = obj.get(prop) {
-                                    current_value = next_value.clone();
+                                    current_value = next_value.clone().into();
                                 } else {
                                     return None; // Property not found
                                 }
@@ -635,11 +648,10 @@ impl ExecutionEngine {
     }
 }
 
-#[async_trait]
-impl RuntimeEngine for ExecutionEngine {
-    async fn initialize(&self) -> AriaResult<()> {
+impl Engine for ExecutionEngine {
+    fn initialize(&self) -> bool {
         // TODO: Initialize tool registry and LLM handler
-        Ok(())
+        true
     }
     
     fn get_dependencies(&self) -> Vec<String> {
@@ -654,14 +666,14 @@ impl RuntimeEngine for ExecutionEngine {
         "ready".to_string()
     }
     
-    async fn health_check(&self) -> AriaResult<bool> {
+    fn health_check(&self) -> bool {
         // TODO: Check if all dependencies are healthy
-        Ok(true)
+        true
     }
     
-    async fn shutdown(&self) -> AriaResult<()> {
+    fn shutdown(&self) -> bool {
         // TODO: Cleanup resources
-        Ok(())
+        true
     }
 }
 
@@ -702,7 +714,7 @@ impl ExecutionEngineInterface for ExecutionEngine {
                 success: true,
                 result: Some(serde_json::json!({
                     "response": format!("Executed reasoning step: {}", step.description)
-                })),
+                }).into()),
                 error: None,
                 metadata: HashMap::new(),
                 execution_time_ms: 0,
@@ -711,10 +723,10 @@ impl ExecutionEngineInterface for ExecutionEngine {
         } else if let Some(tool_name) = &step.tool_name {
             // Execute the tool
             let params_value = serde_json::to_value(&resolved_parameters).unwrap_or(Value::Null);
-            self.tool_registry.execute_tool(tool_name, params_value).await?
+            self.tool_registry.execute_tool(tool_name, params_value.into()).await?
         } else {
             return Err(AriaError::new(
-                ErrorCode::StepExecutionFailed,
+                ErrorCode::StepExecutionError,
                 ErrorCategory::Execution,
                 ErrorSeverity::High,
                 "Step has no tool name specified"
@@ -727,7 +739,7 @@ impl ExecutionEngineInterface for ExecutionEngine {
             .as_secs();
 
         Ok(ExecutionStep {
-            step_id: Uuid::new_v4(),
+            step_id: DeepUuid(Uuid::new_v4()),
             description: step.description.clone(),
             start_time,
             end_time,
@@ -752,7 +764,7 @@ impl ExecutionEngineInterface for ExecutionEngine {
         &self,
         spec: &ContainerSpec,
         context: &RuntimeContext,
-        session_id: Uuid,
+        session_id: DeepUuid,
     ) -> AriaResult<ToolResult> {
         self.execute_container_workload(spec, context, session_id).await
     }
@@ -763,9 +775,9 @@ impl ExecutionEngineInterface for ExecutionEngine {
     
     fn resolve_placeholders(
         &self,
-        parameters: &HashMap<String, serde_json::Value>,
+        parameters: &HashMap<String, DeepValue>,
         history: &[ExecutionStep],
-    ) -> AriaResult<HashMap<String, serde_json::Value>> {
+    ) -> AriaResult<HashMap<String, DeepValue>> {
         self.resolve_placeholders(parameters, history)
     }
 }
@@ -777,5 +789,7 @@ pub struct OrchestrationStepResult {
     pub response: Option<String>,
     pub error: Option<String>,
 }
+
+// ExecutionEngineInterface is defined in engines/mod.rs
 
  

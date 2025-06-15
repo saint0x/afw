@@ -1,8 +1,11 @@
+use crate::deep_size::DeepUuid;
+use crate::engines::llm::types::{LLMConfig, LLMMessage, LLMRequest};
+use crate::engines::llm::{LLMHandler, LLMHandlerInterface};
+use crate::engines::{ConversationEngineInterface, Engine};
 use crate::errors::AriaResult;
 use crate::types::*;
-use crate::engines::{LLMHandlerInterface, RuntimeEngine, ConversationEngineInterface};
-use crate::engines::llm::types::{LLMRequest, LLMMessage, LLMConfig};
 use async_trait::async_trait;
+use uuid::Uuid;
 
 /// Conversation engine for managing conversational flow with LLM integration
 pub struct ConversationEngine {
@@ -123,10 +126,9 @@ impl ConversationEngine {
     }
 }
 
-#[async_trait]
-impl RuntimeEngine for ConversationEngine {
-    async fn initialize(&self) -> AriaResult<()> {
-        Ok(())
+impl Engine for ConversationEngine {
+    fn initialize(&self) -> bool {
+        true
     }
     
     fn get_dependencies(&self) -> Vec<String> {
@@ -137,12 +139,12 @@ impl RuntimeEngine for ConversationEngine {
         "ready".to_string()
     }
     
-    async fn health_check(&self) -> AriaResult<bool> {
-        Ok(true) // ConversationEngine can work even without LLM handler
+    fn health_check(&self) -> bool {
+        true // ConversationEngine can work even without LLM handler
     }
     
-    async fn shutdown(&self) -> AriaResult<()> {
-        Ok(())
+    fn shutdown(&self) -> bool {
+        true
     }
 }
 
@@ -158,12 +160,12 @@ impl ConversationEngineInterface for ConversationEngine {
             .unwrap_or_else(|_| format!("Understood. Starting task: {}", task));
 
         let conversation = ConversationJSON {
-            id: uuid::Uuid::new_v4(),
+            id: DeepUuid(Uuid::new_v4()),
             original_task: task.to_string(),
             turns: vec![
                 // User's initial request
                 ConversationTurn {
-                    id: uuid::Uuid::new_v4(),
+                    id: DeepUuid(Uuid::new_v4()),
                     role: ConversationRole::User,
                     content: task.to_string(),
                     timestamp: std::time::SystemTime::now()
@@ -181,7 +183,7 @@ impl ConversationEngineInterface for ConversationEngine {
                 },
                 // Assistant's acknowledgment
                 ConversationTurn {
-                    id: uuid::Uuid::new_v4(),
+                    id: DeepUuid(Uuid::new_v4()),
                     role: ConversationRole::Assistant,
                     content: opening_response,
                     timestamp: std::time::SystemTime::now()
@@ -221,7 +223,7 @@ impl ConversationEngineInterface for ConversationEngine {
         };
 
         conversation.turns.push(ConversationTurn {
-            id: uuid::Uuid::new_v4(),
+            id: DeepUuid(Uuid::new_v4()),
             role: ConversationRole::Assistant,
             content: step_summary,
             timestamp: std::time::SystemTime::now()
@@ -273,7 +275,7 @@ impl ConversationEngineInterface for ConversationEngine {
 
         // Add final summary to conversation
         conversation.turns.push(ConversationTurn {
-            id: uuid::Uuid::new_v4(),
+            id: DeepUuid(Uuid::new_v4()),
             role: ConversationRole::Assistant,
             content: final_response.clone(),
             timestamp: std::time::SystemTime::now()

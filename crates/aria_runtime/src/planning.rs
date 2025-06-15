@@ -2,20 +2,7 @@ use crate::errors::AriaResult;
 use crate::types::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExecutionPlan {
-    pub id: EntityId,
-    pub steps: Vec<ExecutionStep>,
-    pub total_steps: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExecutionStep {
-    pub id: EntityId,
-    pub name: String,
-    pub step_type: String,
-    pub status: StepStatus,
-}
+// ExecutionPlan and ExecutionStep are defined in types.rs
 
 pub struct PlanningEngine {
     // Minimal implementation
@@ -32,9 +19,21 @@ impl PlanningEngine {
 
     pub async fn create_execution_plan(&self, _task: &str) -> AriaResult<ExecutionPlan> {
         Ok(ExecutionPlan {
-            id: uuid::Uuid::new_v4(),
+            id: crate::deep_size::DeepUuid(uuid::Uuid::new_v4()),
+            task_description: _task.to_string(),
             steps: vec![],
-            total_steps: 0,
+            confidence: 0.5,
+            estimated_duration: Some(60000), // 1 minute
+            resource_requirements: crate::types::ResourceRequirements {
+                cpu_millis: 500,
+                memory_mb: 128,
+                disk_mb: 50,
+                network_bandwidth_kbps: Some(1000),
+                container_count: 0,
+                cpu_cores: Some(1),
+                timeout_seconds: Some(60),
+                max_concurrent: Some(1),
+            },
         })
     }
 } 

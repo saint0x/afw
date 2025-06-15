@@ -1,54 +1,52 @@
 use crate::errors::AriaResult;
-use crate::types::*;
-use crate::planning::ExecutionPlan;
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExecutionContext {
-    pub session_id: SessionId,
-    pub task: String,
-    pub execution_plan: Option<ExecutionPlan>,
-    pub current_step: usize,
-    pub working_memory: std::collections::HashMap<String, serde_json::Value>,
-    pub metrics: ExecutionMetrics,
-    pub created_at: std::time::SystemTime,
-}
+use crate::types::{ExecutionPlan, RuntimeContext, SessionId};
+use std::collections::HashMap;
+use std::path::PathBuf;
 
 pub struct ContextManager {
-    contexts: std::collections::HashMap<SessionId, ExecutionContext>,
+    contexts: HashMap<SessionId, RuntimeContext>,
+    storage_path: PathBuf,
 }
 
 impl ContextManager {
-    pub fn new() -> Self {
+    pub fn new(storage_path: PathBuf) -> Self {
         Self {
-            contexts: std::collections::HashMap::new(),
+            contexts: HashMap::new(),
+            storage_path,
         }
     }
 
-    pub fn create_context(&mut self, session_id: SessionId, task: String) -> AriaResult<&mut ExecutionContext> {
-        let context = ExecutionContext {
-            session_id: session_id.clone(),
-            task,
-            execution_plan: None,
-            current_step: 0,
-            working_memory: std::collections::HashMap::new(),
-            metrics: ExecutionMetrics::default(),
-            created_at: std::time::SystemTime::now(),
-        };
-
+    pub fn create_context(&mut self, session_id: SessionId, task: String) -> AriaResult<&mut RuntimeContext> {
+        let mut context = RuntimeContext::default();
+        context.session_id = crate::deep_size::DeepUuid(uuid::Uuid::parse_str(&session_id)
+            .unwrap_or_else(|_| uuid::Uuid::new_v4()));
+        // context.task = task; // Assuming RuntimeContext will have a task field
+        
         self.contexts.insert(session_id.clone(), context);
         Ok(self.contexts.get_mut(&session_id).unwrap())
     }
 
-    pub fn get_context(&self, session_id: &SessionId) -> Option<&ExecutionContext> {
+    pub fn get_context(&self, session_id: &SessionId) -> Option<&RuntimeContext> {
         self.contexts.get(session_id)
     }
 
-    pub fn get_context_mut(&mut self, session_id: &SessionId) -> Option<&mut ExecutionContext> {
+    pub fn get_context_mut(&mut self, session_id: &SessionId) -> Option<&mut RuntimeContext> {
         self.contexts.get_mut(session_id)
     }
 
-    pub fn remove_context(&mut self, session_id: &SessionId) -> Option<ExecutionContext> {
+    pub fn remove_context(&mut self, session_id: &SessionId) -> Option<RuntimeContext> {
         self.contexts.remove(session_id)
+    }
+
+    pub async fn save_context(&self, _context: &RuntimeContext) -> AriaResult<()> {
+        Ok(())
+    }
+
+    pub async fn load_context(&self, _session_id: &str) -> AriaResult<RuntimeContext> {
+        Ok(RuntimeContext::default())
+    }
+
+    pub async fn update_plan(&self, _session_id: &str, _plan: ExecutionPlan) -> AriaResult<()> {
+        Ok(())
     }
 } 

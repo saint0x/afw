@@ -4,24 +4,28 @@ use uuid::Uuid;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use deepsize::DeepSizeOf;
+
+use crate::deep_size::*;
 
 /// Unique identifier for various runtime entities
-pub type EntityId = Uuid;
+pub type EntityId = DeepUuid;
 
 /// Session identifier for execution context
 pub type SessionId = String;
 
 /// Task complexity assessment
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, DeepSizeOf)]
 pub enum TaskComplexity {
     Simple,
     MultiStep,
     Complex,
     Enterprise,
+    Adaptive,
 }
 
 /// Execution strategy for teams
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub enum TeamStrategy {
     Parallel,
     Sequential,
@@ -32,23 +36,23 @@ pub enum TeamStrategy {
 }
 
 /// LLM provider configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct LLMConfig {
     pub provider: String,
     pub model: String,
     pub api_key: Option<String>,
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
-    pub timeout: Option<Duration>,
+    pub timeout: Option<DeepDuration>,
 }
 
 /// Execution metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct ExecutionMetrics {
-    pub total_duration: Duration,
-    pub planning_duration: Duration,
-    pub execution_duration: Duration,
-    pub reflection_duration: Duration,
+    pub total_duration: DeepDuration,
+    pub planning_duration: DeepDuration,
+    pub execution_duration: DeepDuration,
+    pub reflection_duration: DeepDuration,
     pub step_count: u32,
     pub tool_call_count: u32,
     pub llm_call_count: u32,
@@ -56,22 +60,22 @@ pub struct ExecutionMetrics {
     pub recovery_count: u32,
     pub cache_hit_rate: f32,
     pub success_rate: f32,
-    pub start_time: SystemTime,
-    pub end_time: Option<SystemTime>,
+    pub start_time: DeepSystemTime,
+    pub end_time: Option<DeepSystemTime>,
 }
 
 /// Resource token for Quilt integration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct ResourceToken {
     pub resource_type: String,
     pub resource_id: String,
     pub access_mode: AccessMode,
     pub priority: u8,
-    pub ttl: Option<Duration>,
+    pub ttl: Option<DeepDuration>,
 }
 
 /// Access mode for resource tokens
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub enum AccessMode {
     Read,
     Write,
@@ -81,21 +85,21 @@ pub enum AccessMode {
 }
 
 /// Working memory entry
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct WorkingMemoryEntry {
     pub id: EntityId,
     pub key: String,
-    pub value: serde_json::Value,
+    pub value: DeepValue,
     pub entry_type: MemoryEntryType,
-    pub created_at: SystemTime,
-    pub last_accessed: SystemTime,
+    pub created_at: DeepSystemTime,
+    pub last_accessed: DeepSystemTime,
     pub access_count: u32,
-    pub ttl: Option<Duration>,
+    pub ttl: Option<DeepDuration>,
     pub tags: Vec<String>,
 }
 
 /// Memory entry type
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub enum MemoryEntryType {
     Goal,
     Hypothesis,
@@ -107,17 +111,17 @@ pub enum MemoryEntryType {
 }
 
 /// Tool parameter definition
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct ToolParameter {
     pub name: String,
     pub param_type: String,
     pub description: String,
     pub required: bool,
-    pub default_value: Option<serde_json::Value>,
+    pub default_value: Option<DeepValue>,
 }
 
 /// Agent capability
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct AgentCapability {
     pub name: String,
     pub description: String,
@@ -126,7 +130,7 @@ pub struct AgentCapability {
 }
 
 /// Task priority
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, DeepSizeOf)]
 pub enum Priority {
     Low = 1,
     Normal = 2,
@@ -135,7 +139,7 @@ pub enum Priority {
 }
 
 /// Execution step status
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub enum StepStatus {
     Pending,
     Running,
@@ -146,7 +150,7 @@ pub enum StepStatus {
 }
 
 /// Health status
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, DeepSizeOf)]
 pub enum HealthStatus {
     Healthy,
     Degraded,
@@ -168,7 +172,7 @@ impl Default for LLMConfig {
             api_key: None,
             temperature: Some(0.7),
             max_tokens: Some(2000),
-            timeout: Some(Duration::from_secs(30)),
+            timeout: Some(DeepDuration(std::time::Duration::from_secs(30))),
         }
     }
 }
@@ -176,10 +180,10 @@ impl Default for LLMConfig {
 impl Default for ExecutionMetrics {
     fn default() -> Self {
         Self {
-            total_duration: Duration::ZERO,
-            planning_duration: Duration::ZERO,
-            execution_duration: Duration::ZERO,
-            reflection_duration: Duration::ZERO,
+            total_duration: DeepDuration(std::time::Duration::ZERO),
+            planning_duration: DeepDuration(std::time::Duration::ZERO),
+            execution_duration: DeepDuration(std::time::Duration::ZERO),
+            reflection_duration: DeepDuration(std::time::Duration::ZERO),
             step_count: 0,
             tool_call_count: 0,
             llm_call_count: 0,
@@ -187,7 +191,7 @@ impl Default for ExecutionMetrics {
             recovery_count: 0,
             cache_hit_rate: 0.0,
             success_rate: 0.0,
-            start_time: SystemTime::now(),
+            start_time: DeepSystemTime(std::time::SystemTime::now()),
             end_time: None,
         }
     }
@@ -197,7 +201,7 @@ impl Default for ExecutionMetrics {
 // CORE RUNTIME TYPES
 // ==========================================
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct RuntimeResult {
     pub success: bool,
     pub mode: RuntimeExecutionMode,
@@ -209,7 +213,7 @@ pub struct RuntimeResult {
     pub metrics: RuntimeMetrics,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub enum RuntimeExecutionMode {
     Legacy,
     LegacyWithConversation,
@@ -218,7 +222,7 @@ pub enum RuntimeExecutionMode {
     ContainerWorkload,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct RuntimeMetrics {
     pub total_duration: u64,
     pub start_time: u64,
@@ -233,14 +237,37 @@ pub struct RuntimeMetrics {
     pub memory_usage: MemoryUsage,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl Default for RuntimeMetrics {
+    fn default() -> Self {
+        Self {
+            total_duration: 0,
+            start_time: 0,
+            end_time: 0,
+            step_count: 0,
+            tool_calls: 0,
+            container_calls: 0,
+            agent_calls: 0,
+            token_usage: None,
+            reflection_count: 0,
+            adaptation_count: 0,
+            memory_usage: MemoryUsage {
+                current_size: 0,
+                max_size: 0,
+                utilization_percent: 0.0,
+                item_count: 0,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct TokenUsage {
     pub prompt: u32,
     pub completion: u32,
     pub total: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct MemoryUsage {
     pub current_size: u64,
     pub max_size: u64,
@@ -252,16 +279,18 @@ pub struct MemoryUsage {
 // EXECUTION CONTEXT & STATE
 // ==========================================
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RuntimeContext {
-    pub session_id: Uuid,
+    pub session_id: DeepUuid,
     pub agent_config: AgentConfig,
     pub created_at: u64,
     pub conversation: Option<ConversationJSON>,
     pub status: ExecutionStatus,
     pub current_plan: Option<ExecutionPlan>,
     pub execution_history: Vec<ExecutionStep>,
-    pub working_memory: Arc<RwLock<HashMap<String, serde_json::Value>>>,
+    #[serde(skip, default = "default_working_memory")]
+    pub working_memory: Arc<RwLock<HashMap<String, DeepValue>>>,
     pub insights: Vec<Insight>,
     pub error_history: Vec<RuntimeError>,
     pub current_step: u32,
@@ -272,7 +301,34 @@ pub struct RuntimeContext {
     pub max_memory_size: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+fn default_working_memory() -> Arc<RwLock<HashMap<String, DeepValue>>> {
+    Arc::new(RwLock::new(HashMap::new()))
+}
+
+// Custom DeepSizeOf implementation to handle working_memory field
+impl DeepSizeOf for RuntimeContext {
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        self.session_id.deep_size_of_children(context)
+            + self.agent_config.deep_size_of_children(context)
+            + self.created_at.deep_size_of_children(context)
+            + self.conversation.deep_size_of_children(context)
+            + self.status.deep_size_of_children(context)
+            + self.current_plan.deep_size_of_children(context)
+            + self.execution_history.deep_size_of_children(context)
+            // Skip working_memory since RwLock<HashMap<String, DeepValue>> doesn't implement DeepSizeOf
+            // We calculate this manually in context_manager.rs
+            + self.insights.deep_size_of_children(context)
+            + self.error_history.deep_size_of_children(context)
+            + self.current_step.deep_size_of_children(context)
+            + self.total_steps.deep_size_of_children(context)
+            + self.remaining_steps.deep_size_of_children(context)
+            + self.reflections.deep_size_of_children(context)
+            + self.memory_size.deep_size_of_children(context)
+            + self.max_memory_size.deep_size_of_children(context)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub enum ExecutionStatus {
     Running,
     Succeeded,
@@ -280,9 +336,9 @@ pub enum ExecutionStatus {
     Aborted,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct RuntimeSnapshot {
-    pub session_id: Uuid,
+    pub session_id: DeepUuid,
     pub current_step: u32,
     pub total_steps: u32,
     pub execution_history: Vec<ExecutionStep>,
@@ -294,7 +350,7 @@ pub struct RuntimeSnapshot {
 // AGENT CONFIGURATION
 // ==========================================
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct AgentConfig {
     pub name: String,
     pub system_prompt: Option<String>,
@@ -314,9 +370,9 @@ pub struct AgentConfig {
 // PLANNING & EXECUTION
 // ==========================================
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct ExecutionPlan {
-    pub id: Uuid,
+    pub id: DeepUuid,
     pub task_description: String,
     pub steps: Vec<PlannedStep>,
     pub confidence: f32,
@@ -324,21 +380,21 @@ pub struct ExecutionPlan {
     pub resource_requirements: ResourceRequirements,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct PlannedStep {
-    pub id: Uuid,
+    pub id: DeepUuid,
     pub description: String,
     pub step_type: StepType,
     pub tool_name: Option<String>,
     pub agent_name: Option<String>,
     pub container_spec: Option<ContainerSpec>,
-    pub parameters: HashMap<String, serde_json::Value>,
+    pub parameters: HashMap<String, DeepValue>,
     pub success_criteria: String,
     pub timeout_ms: Option<u64>,
     pub retry_count: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub enum StepType {
     ToolCall,
     AgentInvocation,
@@ -347,7 +403,7 @@ pub enum StepType {
     ReasoningStep,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct ContainerSpec {
     pub image: String,
     pub command: Vec<String>,
@@ -358,7 +414,7 @@ pub struct ContainerSpec {
     pub mount_points: Vec<MountPoint>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct ResourceLimits {
     pub cpu_millis: Option<u32>,
     pub memory_mb: Option<u64>,
@@ -366,14 +422,14 @@ pub struct ResourceLimits {
     pub timeout_seconds: Option<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct MountPoint {
     pub host_path: String,
     pub container_path: String,
     pub read_only: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct ResourceRequirements {
     pub cpu_millis: u32,
     pub memory_mb: u64,
@@ -386,9 +442,24 @@ pub struct ResourceRequirements {
     pub max_concurrent: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl Default for ResourceRequirements {
+    fn default() -> Self {
+        Self {
+            cpu_millis: 500,
+            memory_mb: 128,
+            disk_mb: 50,
+            network_bandwidth_kbps: Some(1000),
+            container_count: 0,
+            cpu_cores: Some(1),
+            timeout_seconds: Some(60),
+            max_concurrent: Some(1),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct ExecutionStep {
-    pub step_id: Uuid,
+    pub step_id: DeepUuid,
     pub description: String,
     pub start_time: u64,
     pub end_time: u64,
@@ -398,15 +469,15 @@ pub struct ExecutionStep {
     pub tool_used: Option<String>,
     pub agent_used: Option<String>,
     pub container_used: Option<String>,
-    pub parameters: HashMap<String, serde_json::Value>,
-    pub result: Option<serde_json::Value>,
+    pub parameters: HashMap<String, DeepValue>,
+    pub result: Option<DeepValue>,
     pub error: Option<String>,
     pub reflection: Option<Reflection>,
     pub summary: String,
     pub resource_usage: Option<ResourceUsage>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct ResourceUsage {
     pub cpu_time_ms: u64,
     pub memory_peak_mb: u64,
@@ -414,7 +485,7 @@ pub struct ResourceUsage {
     pub network_io_kb: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct TaskAnalysis {
     pub complexity: TaskComplexity,
     pub requires_planning: bool,
@@ -427,9 +498,9 @@ pub struct TaskAnalysis {
 // CONVERSATION SYSTEM
 // ==========================================
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct ConversationJSON {
-    pub id: Uuid,
+    pub id: DeepUuid,
     pub original_task: String,
     pub turns: Vec<ConversationTurn>,
     pub final_response: String,
@@ -438,16 +509,16 @@ pub struct ConversationJSON {
     pub state: ConversationState,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct ConversationTurn {
-    pub id: Uuid,
+    pub id: DeepUuid,
     pub role: ConversationRole,
     pub content: String,
     pub timestamp: u64,
     pub metadata: Option<ConversationMetadata>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub enum ConversationRole {
     User,
     Assistant,
@@ -457,9 +528,9 @@ pub enum ConversationRole {
     Container,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct ConversationMetadata {
-    pub step_id: Option<Uuid>,
+    pub step_id: Option<DeepUuid>,
     pub tool_used: Option<String>,
     pub agent_used: Option<String>,
     pub action_type: Option<ActionType>,
@@ -467,7 +538,7 @@ pub struct ConversationMetadata {
     pub reflection: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, DeepSizeOf)]
 pub enum ConversationState {
     Initiated,
     Working,
@@ -478,7 +549,7 @@ pub enum ConversationState {
     Error,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub enum ActionType {
     Search,
     Analyze,
@@ -496,8 +567,8 @@ pub enum ActionType {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Reflection {
-    pub id: Uuid,
-    pub step_id: Uuid,
+    pub id: DeepUuid,
+    pub step_id: DeepUuid,
     pub assessment: ReflectionAssessment,
     pub suggested_action: SuggestedAction,
     pub reasoning: String,
@@ -506,15 +577,29 @@ pub struct Reflection {
     pub improvements: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl DeepSizeOf for Reflection {
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        self.id.deep_size_of_children(context)
+            + self.step_id.deep_size_of_children(context)
+            + self.assessment.deep_size_of_children(context)
+            + self.suggested_action.deep_size_of_children(context)
+            + self.reasoning.deep_size_of_children(context)
+            + self.confidence.deep_size_of_children(context)
+            + self.timestamp.deep_size_of_children(context)
+            + self.improvements.deep_size_of_children(context)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct ReflectionAssessment {
     pub performance: PerformanceLevel,
     pub quality: QualityLevel,
     pub efficiency: EfficiencyLevel,
     pub suggested_improvements: Vec<String>,
+    pub requires_replanning: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub enum PerformanceLevel {
     Excellent,
     Good,
@@ -522,7 +607,7 @@ pub enum PerformanceLevel {
     Poor,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub enum QualityLevel {
     Optimal,
     Good,
@@ -530,7 +615,7 @@ pub enum QualityLevel {
     Wrong,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub enum EfficiencyLevel {
     VeryEfficient,
     Efficient,
@@ -538,7 +623,7 @@ pub enum EfficiencyLevel {
     Inefficient,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub enum SuggestedAction {
     Continue,
     Retry,
@@ -549,7 +634,7 @@ pub enum SuggestedAction {
     OptimizeParameters,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct ExecutionAdaptation {
     pub adaptation_type: AdaptationType,
     pub specific_changes: Vec<String>,
@@ -560,16 +645,17 @@ pub struct ExecutionAdaptation {
     pub requires_replanning: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub enum AdaptationType {
     Continue,
     ModifyApproach,
     ChangeTools,
     UseContainers,
     ReplanningNeeded,
+    Risky,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub enum ImpactLevel {
     Positive,
     Neutral,
@@ -578,17 +664,30 @@ pub enum ImpactLevel {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Insight {
-    pub id: Uuid,
+    pub id: DeepUuid,
     pub insight_type: InsightType,
     pub description: String,
     pub confidence: f32,
     pub source: String,
     pub timestamp: u64,
     pub actionable: bool,
-    pub metadata: HashMap<String, serde_json::Value>,
+    pub metadata: HashMap<String, DeepValue>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl DeepSizeOf for Insight {
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        self.id.deep_size_of_children(context)
+            + self.insight_type.deep_size_of_children(context)
+            + self.description.deep_size_of_children(context)
+            + self.confidence.deep_size_of_children(context)
+            + self.source.deep_size_of_children(context)
+            + self.timestamp.deep_size_of_children(context)
+            + self.actionable.deep_size_of_children(context)
+            + deep_size_of_hashmap_value(&self.metadata, context)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub enum InsightType {
     PatternRecognition,
     PerformanceOptimization,
@@ -605,21 +704,38 @@ pub enum InsightType {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeError {
-    pub id: Uuid,
+    pub id: DeepUuid,
     pub error_type: RuntimeErrorType,
     pub message: String,
-    pub step_id: Option<Uuid>,
+    pub step_id: Option<DeepUuid>,
     pub tool_name: Option<String>,
     pub agent_name: Option<String>,
     pub container_id: Option<String>,
     pub timestamp: u64,
-    pub context: HashMap<String, serde_json::Value>,
+    pub context: HashMap<String, DeepValue>,
     pub recoverable: bool,
     pub recovery_actions: Vec<String>,
     pub user_guidance: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl DeepSizeOf for RuntimeError {
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        self.id.deep_size_of_children(context)
+            + self.error_type.deep_size_of_children(context)
+            + self.message.deep_size_of_children(context)
+            + self.step_id.deep_size_of_children(context)
+            + self.tool_name.deep_size_of_children(context)
+            + self.agent_name.deep_size_of_children(context)
+            + self.container_id.deep_size_of_children(context)
+            + self.timestamp.deep_size_of_children(context)
+            + deep_size_of_hashmap_value(&self.context, context)
+            + self.recoverable.deep_size_of_children(context)
+            + self.recovery_actions.deep_size_of_children(context)
+            + self.user_guidance.deep_size_of_children(context)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub enum RuntimeErrorType {
     ToolExecution,
     AgentInvocation,
@@ -636,7 +752,7 @@ pub enum RuntimeErrorType {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FallbackStrategy {
-    pub id: Uuid,
+    pub id: DeepUuid,
     pub description: String,
     pub trigger_condition: String,
     pub actions: Vec<String>,
@@ -644,11 +760,22 @@ pub struct FallbackStrategy {
     pub max_retries: u32,
 }
 
+impl DeepSizeOf for FallbackStrategy {
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        self.id.deep_size_of_children(context)
+            + self.description.deep_size_of_children(context)
+            + self.trigger_condition.deep_size_of_children(context)
+            + self.actions.deep_size_of_children(context)
+            + self.confidence.deep_size_of_children(context)
+            + self.max_retries.deep_size_of_children(context)
+    }
+}
+
 // ==========================================
 // EXECUTION DETAILS
 // ==========================================
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct ExecutionDetails {
     pub mode: RuntimeExecutionMode,
     pub step_results: Vec<ExecutionStep>,
@@ -663,7 +790,7 @@ pub struct ExecutionDetails {
     pub resource_utilization: ResourceUtilization,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct ResourceUtilization {
     pub cpu_utilization_percent: f32,
     pub memory_utilization_percent: f32,
@@ -672,11 +799,23 @@ pub struct ResourceUtilization {
     pub container_efficiency: f32,
 }
 
+impl Default for ResourceUtilization {
+    fn default() -> Self {
+        Self {
+            cpu_utilization_percent: 0.0,
+            memory_utilization_percent: 0.0,
+            disk_utilization_percent: 0.0,
+            network_utilization_percent: 0.0,
+            container_efficiency: 0.0,
+        }
+    }
+}
+
 // ==========================================
 // RUNTIME CONFIGURATION
 // ==========================================
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct RuntimeConfiguration {
     pub enhanced_runtime: bool,
     pub planning_threshold: TaskComplexity,
@@ -723,7 +862,7 @@ impl Default for RuntimeConfiguration {
 // STATUS TYPES
 // ==========================================
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, DeepSizeOf)]
 pub enum RuntimeStatus {
     Initializing,
     Ready,
@@ -739,11 +878,35 @@ pub enum RuntimeStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResult {
     pub success: bool,
-    pub result: Option<serde_json::Value>,
+    pub result: Option<DeepValue>,
     pub error: Option<String>,
-    pub metadata: HashMap<String, serde_json::Value>,
+    pub metadata: HashMap<String, DeepValue>,
     pub execution_time_ms: u64,
     pub resource_usage: Option<ResourceUsage>,
+}
+
+impl Default for ToolResult {
+    fn default() -> Self {
+        Self {
+            success: false,
+            result: None,
+            error: None,
+            metadata: HashMap::new(),
+            execution_time_ms: 0,
+            resource_usage: None,
+        }
+    }
+}
+
+impl DeepSizeOf for ToolResult {
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        self.success.deep_size_of_children(context)
+            + deep_size_of_option_value(&self.result, context)
+            + self.error.deep_size_of_children(context)
+            + deep_size_of_hashmap_value(&self.metadata, context)
+            + self.execution_time_ms.deep_size_of_children(context)
+            + self.resource_usage.deep_size_of_children(context)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -752,17 +915,48 @@ pub struct RegistryEntry {
     pub entry_type: RegistryEntryType,
     pub bundle_id: Option<String>,
     pub version: String,
-    pub metadata: HashMap<String, serde_json::Value>,
+    pub metadata: HashMap<String, DeepValue>,
     pub created_at: u64,
     pub updated_at: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl DeepSizeOf for RegistryEntry {
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        self.name.deep_size_of_children(context)
+            + self.entry_type.deep_size_of_children(context)
+            + self.bundle_id.deep_size_of_children(context)
+            + self.version.deep_size_of_children(context)
+            + deep_size_of_hashmap_value(&self.metadata, context)
+            + self.created_at.deep_size_of_children(context)
+            + self.updated_at.deep_size_of_children(context)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub enum RegistryEntryType {
     Tool,
     Agent,
     Container,
     Pipeline,
+}
+
+impl Default for AgentConfig {
+    fn default() -> Self {
+        Self {
+            name: "default-agent".to_string(),
+            system_prompt: None,
+            directives: None,
+            tools: vec![],
+            agents: vec![],
+            llm: LLMConfig::default(),
+            max_iterations: Some(10),
+            timeout_ms: Some(300_000),
+            memory_limit: Some(512 * 1024 * 1024),
+            agent_type: None,
+            capabilities: vec![],
+            memory_enabled: Some(true),
+        }
+    }
 }
 
  

@@ -1,17 +1,19 @@
-use crate::errors::{AriaResult, AriaError, ErrorCode, ErrorCategory, ErrorSeverity};
-use crate::types::*;
-use crate::engines::{ToolRegistry, RuntimeEngine, ReflectionEngineInterface};
+use crate::deep_size::DeepUuid;
 use crate::engines::tool_registry::ToolRegistryInterface;
+use crate::engines::{Engine, ReflectionEngineInterface};
+use crate::errors::{AriaError, AriaResult, ErrorCategory, ErrorCode, ErrorSeverity};
+use crate::types::*;
 use async_trait::async_trait;
 use std::sync::Arc;
+use uuid::Uuid;
 
 /// Reflection engine for self-assessment and improvement using ponderTool
 pub struct ReflectionEngine {
-    tool_registry: Arc<ToolRegistry>,
+    tool_registry: Arc<dyn ToolRegistryInterface>,
 }
 
 impl ReflectionEngine {
-    pub fn new(tool_registry: Arc<ToolRegistry>) -> Self {
+    pub fn new(tool_registry: Arc<dyn ToolRegistryInterface>) -> Self {
         Self {
             tool_registry,
         }
@@ -41,9 +43,9 @@ impl ReflectionEngine {
     ) -> AriaResult<Reflection> {
         let conclusion = ponder_result.get("conclusion")
             .ok_or_else(|| AriaError::new(
-                ErrorCode::ReflectionFailed,
+                ErrorCode::ReflectionError,
                 ErrorCategory::Reflection,
-                ErrorSeverity::Medium,
+                ErrorSeverity::High,
                 "Ponder result missing conclusion"
             ))?;
 
@@ -101,10 +103,11 @@ impl ReflectionEngine {
                 EfficiencyLevel::Inefficient
             },
             suggested_improvements: next_steps.clone(),
+            requires_replanning: !step.success,
         };
 
         Ok(Reflection {
-            id: uuid::Uuid::new_v4(),
+            id: DeepUuid(Uuid::new_v4()),
             step_id: step.step_id,
             assessment,
             suggested_action,
@@ -121,13 +124,14 @@ impl ReflectionEngine {
     /// Create fallback reflection when ponder tool fails (matching Symphony)
     fn create_fallback_reflection(&self, step: &ExecutionStep, reason: &str) -> Reflection {
         Reflection {
-            id: uuid::Uuid::new_v4(),
+            id: DeepUuid(Uuid::new_v4()),
             step_id: step.step_id,
             assessment: ReflectionAssessment {
                 performance: PerformanceLevel::Poor,
                 quality: QualityLevel::Wrong,
                 efficiency: EfficiencyLevel::Inefficient,
                 suggested_improvements: vec!["Reflection tool failed - manual review needed".to_string()],
+                requires_replanning: true,
             },
             suggested_action: SuggestedAction::Abort,
             reasoning: format!("Reflection failed: {}", reason),
@@ -141,19 +145,10 @@ impl ReflectionEngine {
     }
 }
 
-#[async_trait]
-impl RuntimeEngine for ReflectionEngine {
-    async fn initialize(&self) -> AriaResult<()> {
-        // Verify ponder tool is available
-        if !self.tool_registry.is_tool_available("ponderTool").await {
-            return Err(AriaError::new(
-                ErrorCode::ReflectionFailed,
-                ErrorCategory::Reflection,
-                ErrorSeverity::High,
-                "ponderTool not available for reflection engine"
-            ));
-        }
-        Ok(())
+impl Engine for ReflectionEngine {
+    fn initialize(&self) -> bool {
+        // TODO: Verify ponder tool is available (async version would be better)
+        true
     }
     
     fn get_dependencies(&self) -> Vec<String> {
@@ -164,12 +159,13 @@ impl RuntimeEngine for ReflectionEngine {
         "ready".to_string()
     }
     
-    async fn health_check(&self) -> AriaResult<bool> {
-        Ok(self.tool_registry.is_tool_available("ponderTool").await)
+    fn health_check(&self) -> bool {
+        // TODO: Check if ponderTool is available (async version would be better)
+        true
     }
     
-    async fn shutdown(&self) -> AriaResult<()> {
-        Ok(())
+    fn shutdown(&self) -> bool {
+        true
     }
 }
 
@@ -180,54 +176,86 @@ impl ReflectionEngineInterface for ReflectionEngine {
         step: &ExecutionStep,
         context: &RuntimeContext,
     ) -> AriaResult<Reflection> {
-        // Create sophisticated ponder query like Symphony does
-        let query = self.create_ponder_query(step);
-
-        // Prepare context for ponder tool (matching Symphony's context structure)
-        let ponder_context = serde_json::json!({
-            "agentConfig": {
-                "name": context.agent_config.name,
-                "tools": context.agent_config.tools
-            },
-            "fullPlan": context.current_plan.as_ref().map(|p| serde_json::json!({
-                "id": p.id,
-                "task_description": p.task_description,
-                "steps": p.steps.len()
-            })),
-            "executionHistory": context.execution_history.iter().map(|s| serde_json::json!({
-                "stepId": s.step_id,
-                "description": s.description,
-                "success": s.success,
-                "tool_used": s.tool_used
-            })).collect::<Vec<_>>(),
-            "currentStep": context.current_step,
-            "totalSteps": context.total_steps
-        });
-
-        let ponder_params = serde_json::json!({
-            "query": query,
-            "context": ponder_context
-        });
-
-        // Execute ponder tool like Symphony does
-        match self.tool_registry.execute_tool("ponderTool", ponder_params).await {
-            Ok(ponder_result) => {
-                if !ponder_result.success {
-                    return Ok(self.create_fallback_reflection(step, "Ponder tool execution failed"));
-                }
-
-                if let Some(result) = ponder_result.result {
-                    match self.parse_ponder_result_to_reflection(step, &result) {
-                        Ok(reflection) => Ok(reflection),
-                        Err(_) => Ok(self.create_fallback_reflection(step, "Failed to parse ponder result"))
-                    }
-                } else {
-                    Ok(self.create_fallback_reflection(step, "Ponder tool returned no result"))
-                }
-            },
-            Err(_) => {
-                Ok(self.create_fallback_reflection(step, "Ponder tool execution threw an error"))
-            }
+        // Ensure ponderTool is available
+        if !self.tool_registry.is_tool_available("ponderTool").await {
+            return Err(AriaError::new(
+                ErrorCode::ToolNotFound,
+                ErrorCategory::Tool,
+                ErrorSeverity::High,
+                "ponderTool not available for reflection",
+            ));
         }
+
+        let last_step = context.execution_history.last().ok_or_else(|| {
+            AriaError::new(
+                ErrorCode::ContextError,
+                ErrorCategory::Context,
+                ErrorSeverity::High,
+                "No execution history available for reflection",
+            )
+        })?;
+
+        let ponder_query = self.create_ponder_query(last_step);
+
+        let ponder_result = self
+            .tool_registry
+            .execute_tool(
+                "ponderTool",
+                serde_json::json!({ "query": ponder_query }).into(),
+            )
+            .await?;
+
+        if !ponder_result.success {
+            return Err(AriaError::new(
+                ErrorCode::ToolExecutionError,
+                ErrorCategory::Tool,
+                ErrorSeverity::Medium,
+                &format!(
+                    "ponderTool failed: {}",
+                    ponder_result.error.unwrap_or_else(|| "Unknown error".to_string())
+                ),
+            ));
+        }
+
+        let conclusion = ponder_result
+            .result
+            .as_ref()
+            .and_then(|r| r.get("conclusion"))
+            .and_then(|c| c.as_str())
+            .unwrap_or("No conclusion reached.")
+            .to_string();
+
+        let suggested_action = match conclusion.to_lowercase().as_str() {
+            "continue" => SuggestedAction::Continue,
+            "retry" => SuggestedAction::Retry,
+            _ => SuggestedAction::ModifyPlan,
+        };
+
+        Ok(Reflection {
+            id: DeepUuid(Uuid::new_v4()),
+            step_id: last_step.step_id,
+            assessment: ReflectionAssessment {
+                performance: PerformanceLevel::Good,
+                quality: QualityLevel::Good,
+                efficiency: EfficiencyLevel::Efficient,
+                suggested_improvements: vec![],
+                requires_replanning: false,
+            },
+            suggested_action,
+            reasoning: conclusion,
+            confidence: ponder_result
+                .result
+                .as_ref()
+                .and_then(|r| r.get("confidence"))
+                .and_then(|c| c.as_f64())
+                .unwrap_or(0.7) as f32,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            improvements: vec![],
+        })
     }
 }
+
+// ReflectionEngineInterface is defined in engines/mod.rs

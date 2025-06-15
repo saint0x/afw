@@ -10,13 +10,7 @@ pub struct ToolConfig {
     pub parameters: Vec<ToolParameter>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolResult {
-    pub success: bool,
-    pub result: Option<serde_json::Value>,
-    pub error: Option<String>,
-    pub metrics: ExecutionMetrics,
-}
+// ToolResult is defined in types.rs, using that instead
 
 // Simplified tool representation for dyn compatibility
 #[derive(Debug, Clone)]
@@ -50,16 +44,20 @@ impl Tool {
     }
 
     pub async fn execute(&self, params: serde_json::Value) -> AriaResult<ToolResult> {
+        use crate::deep_size::DeepValue;
+        
         // Simplified execution - just return success for scaffolding
         Ok(ToolResult {
             success: true,
-            result: Some(serde_json::json!({
+            result: Some(DeepValue(serde_json::json!({
                 "tool": self.name(),
                 "input": params,
                 "output": "Tool execution placeholder"
-            })),
+            }))),
             error: None,
-            metrics: ExecutionMetrics::default(),
+            metadata: std::collections::HashMap::new(),
+            execution_time_ms: 0,
+            resource_usage: None,
         })
     }
 }
@@ -86,7 +84,9 @@ impl ToolRegistry {
                 success: false,
                 result: None,
                 error: Some(format!("Tool '{}' not found", name)),
-                metrics: ExecutionMetrics::default(),
+                metadata: std::collections::HashMap::new(),
+                execution_time_ms: 0,
+                resource_usage: None,
             }),
         }
     }

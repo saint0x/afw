@@ -1,4 +1,4 @@
-use aria_runtime::{create_aria_runtime_default, RuntimeConfig, RUNTIME_VERSION};
+use aria_runtime::{create_aria_runtime_default, RuntimeConfiguration, RUNTIME_VERSION};
 use tracing::{info, error, warn};
 use std::env;
 
@@ -17,7 +17,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config_path = args.get(1).map(|s| s.as_str()).unwrap_or("aria.toml");
 
     // TODO: Load config from file
-    let config = RuntimeConfig::default();
+    let config = RuntimeConfiguration::default();
     
     info!("Configuration loaded:");
     info!("  - Enhanced runtime: {}", config.enhanced_runtime);

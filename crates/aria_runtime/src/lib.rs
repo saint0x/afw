@@ -20,32 +20,37 @@ The runtime consists of several key components:
 - **Context Manager**: Execution context and learning state
 */
 
-pub mod runtime;
+#![doc = include_str!("../../../ARIARUNTIME.md")]
+
+pub mod context;
+pub mod deep_size;
+pub mod engines;
+pub mod errors;
+pub mod memory;
 pub mod planning;
 pub mod reflection;
+pub mod runtime;
 pub mod tools;
-pub mod agents;
-pub mod teams;
-pub mod memory;
-pub mod cache;
-pub mod context;
-pub mod errors;
 pub mod types;
-pub mod engines;
 
-// Re-export main components
-pub use runtime::{AriaRuntime, RuntimeConfig, RuntimeResult};
-pub use planning::{PlanningEngine, ExecutionPlan};
-pub use reflection::{ReflectionEngine, ReflectionResult};
-pub use tools::{ToolRegistry, Tool, ToolResult, ToolConfig};
-pub use agents::{Agent, AgentConfig, AgentResult};
-pub use teams::{Team, TeamConfig, TeamResult};
-pub use memory::{MemorySystem, MemoryConfig};
-pub use cache::{CacheIntelligence, CacheConfig};
-pub use context::{ContextManager, ExecutionContext};
 pub use errors::{AriaError, AriaResult};
-pub use types::{TaskComplexity, TeamStrategy, LLMConfig, ExecutionMetrics, Priority}; // Direct export from types
-pub use engines::AriaEngines;
+pub use types::{RuntimeConfiguration, RuntimeResult};
+pub use runtime::AriaRuntime;
+
+use crate::engines::{
+    AriaEngines,
+    Engine,
+    execution::ExecutionEngine,
+    planning::PlanningEngine,
+    conversation::ConversationEngine,
+    reflection::ReflectionEngine,
+    tool_registry::{ToolRegistry, ToolRegistryInterface},
+    context_manager::ContextManagerEngine,
+    llm::LLMHandler,
+    system_prompt::SystemPromptService,
+};
+use std::{collections::HashMap, sync::Arc, path::PathBuf};
+use tokio::sync::RwLock;
 
 /// Runtime version
 pub const RUNTIME_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -62,7 +67,7 @@ pub async fn create_aria_runtime_default() -> AriaResult<AriaRuntime> {
 }
 
 /// Create a new Aria Runtime with custom configuration
-pub async fn create_aria_runtime(_config: RuntimeConfig) -> AriaResult<AriaRuntime> {
+pub async fn create_aria_runtime(_config: RuntimeConfiguration) -> AriaResult<AriaRuntime> {
     // For now, this is not implemented since we need actual engine implementations
     Err(AriaError::new(
         errors::ErrorCode::InitializationFailed,
@@ -70,4 +75,52 @@ pub async fn create_aria_runtime(_config: RuntimeConfig) -> AriaResult<AriaRunti
         errors::ErrorSeverity::Critical,
         "Engine factory not yet implemented - runtime creation not available",
     ))
+}
+
+impl AriaEngines {
+    pub fn new() -> Self {
+        // Create LLM handler with default configuration
+        let llm_config = crate::engines::llm::LLMHandlerConfig::default();
+        let llm_handler = LLMHandler::new(llm_config);
+
+        // Create tool registry with LLM handler
+        let tool_registry = ToolRegistry::new(Arc::new(llm_handler.clone()));
+
+        // Create system prompt service
+        let system_prompt = SystemPromptService::new();
+
+        // Create all engines with concrete types
+        let execution = ExecutionEngine::new(
+            Arc::new(tool_registry.clone()) as Arc<dyn crate::engines::tool_registry::ToolRegistryInterface>,
+            Arc::new(llm_handler.clone()),
+            None, // No container manager for now
+        );
+        
+        let planning = PlanningEngine::new(
+            Arc::new(tool_registry.clone()) as Arc<dyn crate::engines::tool_registry::ToolRegistryInterface>
+        );
+        
+        let conversation = ConversationEngine::new(
+            Some(Box::new(crate::engines::LLMHandlerWrapper::new(llm_handler.clone())))
+        );
+        
+        let reflection = ReflectionEngine::new(
+            Arc::new(tool_registry.clone()) as Arc<dyn crate::engines::tool_registry::ToolRegistryInterface>
+        );
+        
+        let context_manager = ContextManagerEngine::new(
+            crate::types::AgentConfig::default()
+        );
+
+        Self {
+            execution,
+            planning,
+            conversation,
+            reflection,
+            context_manager,
+            llm_handler,
+            tool_registry,
+            system_prompt,
+        }
+    }
 } 

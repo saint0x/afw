@@ -1,17 +1,22 @@
 use async_trait::async_trait;
 use uuid::Uuid;
-
-use crate::types::*;
+use crate::deep_size::{DeepUuid, DeepValue};
 use crate::errors::AriaResult;
+use crate::types::{
+    AgentConfig, ContainerSpec, ExecutionPlan, ExecutionStep, PlannedStep, Reflection,
+    RuntimeContext, TaskAnalysis, ToolResult, ConversationJSON, ExecutionStatus, 
+    MemoryUsage, ResourceUsage,
+};
 use crate::engines::execution::ExecutionEngine;
 use crate::engines::planning::PlanningEngine;
 use crate::engines::conversation::ConversationEngine;
 use crate::engines::reflection::ReflectionEngine;
 use crate::engines::context_manager::ContextManagerEngine;
-use crate::engines::llm::{LLMHandler, LLMHandlerConfig, LLMHandlerInterface};
+use crate::engines::llm::{LLMHandler, LLMHandlerInterface};
 use crate::engines::tool_registry::ToolRegistry;
 use crate::engines::system_prompt::SystemPromptService;
-use std::sync::Arc;
+// Removed downcast dependency for trait object compatibility
+use std::collections::HashMap;
 
 pub mod execution;
 pub mod planning;
@@ -23,6 +28,7 @@ pub mod tool_registry;
 pub mod system_prompt;
 
 /// Main orchestrator for all Aria runtime engines
+/// Uses concrete types for better performance and type safety
 pub struct AriaEngines {
     pub execution: ExecutionEngine,
     pub planning: PlanningEngine,
@@ -35,79 +41,43 @@ pub struct AriaEngines {
 }
 
 impl AriaEngines {
-    pub async fn new() -> AriaResult<Self> {
-        // Create LLM handler with default configuration
-        let llm_config = LLMHandlerConfig::default();
-        let llm_handler = LLMHandler::new(llm_config);
-        
-        // Create tool registry with no bundle store for now
-        let tool_registry = ToolRegistry::new(None, Arc::new(llm_handler.clone()));
-        
-        // Create system prompt service
-        let system_prompt = SystemPromptService::new();
-        
-        // Create LLM handler interface for execution engine
-        let llm_handler_interface: Box<dyn LLMHandlerInterface> = Box::new(LLMHandlerWrapper::new(llm_handler.clone()));
-        
-        // Create all engines with proper dependencies
-        let execution = ExecutionEngine::new(
-            Arc::new(tool_registry.clone()),
-            llm_handler_interface,
-            None, // No container manager for now
-        );
-        let planning = PlanningEngine::new(Arc::new(tool_registry.clone()));
-        let conversation = ConversationEngine::new(Some(Box::new(LLMHandlerWrapper::new(llm_handler.clone()))));
-        let reflection = ReflectionEngine::new(Arc::new(tool_registry.clone()));
-        let context_manager = ContextManagerEngine::new();
-        
-        Ok(Self {
-            execution,
-            planning,
-            conversation,
-            reflection,
-            context_manager,
-            llm_handler,
-            tool_registry,
-            system_prompt,
-        })
-    }
-
     /// Initialize all engines
-    pub async fn initialize_all(&self) -> AriaResult<()> {
+    pub fn initialize_all(&self) -> bool {
         // Initialize engines in dependency order
-        // LLM handler and tool registry first
-        // Then other engines that depend on them
-        
-        // Note: Individual engine initialization would happen here
-        // For now, they're all simple structs
-        
-        Ok(())
+        self.execution.initialize() &&
+        self.planning.initialize() &&
+        self.conversation.initialize() &&
+        self.reflection.initialize() &&
+        self.context_manager.initialize()
     }
 
     /// Shutdown all engines gracefully
-    pub async fn shutdown_all(&self) -> AriaResult<()> {
+    pub fn shutdown_all(&self) -> bool {
         // Shutdown engines in reverse dependency order
-        // This would include cleanup of resources, connections, etc.
-        
-        Ok(())
+        self.context_manager.shutdown() &&
+        self.reflection.shutdown() &&
+        self.conversation.shutdown() &&
+        self.planning.shutdown() &&
+        self.execution.shutdown()
     }
 
     /// Health check for all engines
-    pub async fn health_check_all(&self) -> AriaResult<bool> {
-        // Check health of all engines
-        // Return false if any engine is unhealthy
-        
-        Ok(true)
+    pub fn health_check_all(&self) -> bool {
+        self.execution.health_check() &&
+        self.planning.health_check() &&
+        self.conversation.health_check() &&
+        self.reflection.health_check() &&
+        self.context_manager.health_check()
     }
 }
 
 /// Wrapper to implement LLMHandlerInterface for LLMHandler
-struct LLMHandlerWrapper {
+pub struct LLMHandlerWrapper {
     handler: LLMHandler,
 }
 
 impl LLMHandlerWrapper {
-    fn new(handler: LLMHandler) -> Self {
+    pub fn new(handler: LLMHandler) -> Self {
         Self { handler }
     }
 }
@@ -163,27 +133,27 @@ impl LLMHandlerInterface for LLMHandlerWrapper {
 }
 
 /// Base trait for all runtime engines
-#[async_trait]
-pub trait RuntimeEngine: Send + Sync {
-    /// Initialize the engine
-    async fn initialize(&self) -> AriaResult<()>;
+/// Simplified to avoid trait object compatibility issues
+pub trait Engine: Send + Sync {
+    /// Get current state of the engine
+    fn get_state(&self) -> String;
     
     /// Get list of dependencies this engine requires
     fn get_dependencies(&self) -> Vec<String>;
     
-    /// Get current state of the engine
-    fn get_state(&self) -> String;
+    /// Perform health check (simplified to sync)
+    fn health_check(&self) -> bool;
     
-    /// Perform health check
-    async fn health_check(&self) -> AriaResult<bool>;
+    /// Initialize the engine (simplified to sync)
+    fn initialize(&self) -> bool;
     
-    /// Shutdown the engine gracefully
-    async fn shutdown(&self) -> AriaResult<()>;
+    /// Shutdown the engine gracefully (simplified to sync)
+    fn shutdown(&self) -> bool;
 }
 
 /// Interface for execution engines
 #[async_trait]
-pub trait ExecutionEngineInterface: RuntimeEngine {
+pub trait ExecutionEngineInterface: Engine {
     /// Execute a task using the agent configuration and context
     async fn execute(
         &self,
@@ -204,7 +174,7 @@ pub trait ExecutionEngineInterface: RuntimeEngine {
         &self,
         spec: &ContainerSpec,
         context: &RuntimeContext,
-        session_id: uuid::Uuid,
+        session_id: DeepUuid,
     ) -> AriaResult<ToolResult>;
 
     /// Detect if a task requires multi-tool orchestration
@@ -213,14 +183,14 @@ pub trait ExecutionEngineInterface: RuntimeEngine {
     /// Resolve parameter placeholders using execution history
     fn resolve_placeholders(
         &self,
-        parameters: &std::collections::HashMap<String, serde_json::Value>,
+        parameters: &HashMap<String, DeepValue>,
         history: &[ExecutionStep],
-    ) -> AriaResult<std::collections::HashMap<String, serde_json::Value>>;
+    ) -> AriaResult<HashMap<String, DeepValue>>;
 }
 
 /// Interface for planning engines
 #[async_trait]
-pub trait PlanningEngineInterface: RuntimeEngine {
+pub trait PlanningEngineInterface: Engine {
     /// Analyze task complexity
     async fn analyze_task(
         &self,
@@ -239,7 +209,7 @@ pub trait PlanningEngineInterface: RuntimeEngine {
 
 /// Interface for conversation engines
 #[async_trait]
-pub trait ConversationEngineInterface: RuntimeEngine {
+pub trait ConversationEngineInterface: Send + Sync {
     /// Initiate conversation
     async fn initiate(
         &self,
@@ -270,7 +240,7 @@ pub trait ConversationEngineInterface: RuntimeEngine {
 
 /// Interface for reflection engines
 #[async_trait]
-pub trait ReflectionEngineInterface: RuntimeEngine {
+pub trait ReflectionEngineInterface: Engine {
     /// Reflect on execution step
     async fn reflect(
         &self,
@@ -281,7 +251,7 @@ pub trait ReflectionEngineInterface: RuntimeEngine {
 
 /// Interface for context managers
 #[async_trait]
-pub trait ContextManagerInterface: RuntimeEngine {
+pub trait ContextManagerInterface: Send + Sync {
     /// Set execution plan
     async fn set_plan(&self, plan: ExecutionPlan) -> AriaResult<()>;
     
@@ -296,6 +266,12 @@ pub trait ContextManagerInterface: RuntimeEngine {
     
     /// Get execution state
     async fn get_execution_state(&self) -> AriaResult<RuntimeContext>;
+
+    /// Get current memory usage
+    async fn get_memory_usage(&self) -> AriaResult<MemoryUsage>;
+
+    /// Serialize the entire runtime context
+    async fn serialize_context(&self, format: context_manager::SerializationFormat) -> AriaResult<Vec<u8>>;
 }
 
 /// Container manager interface for container execution

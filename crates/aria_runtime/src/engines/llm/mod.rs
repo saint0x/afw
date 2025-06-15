@@ -156,7 +156,7 @@ impl LLMHandler {
                     ErrorCode::LLMProviderNotFound,
                     ErrorCategory::LLM,
                     ErrorSeverity::High,
-                    format!("Provider '{}' not found", provider_name)
+                    &format!("Provider '{}' not found", provider_name)
                 ))?
                 .clone_box()
         };
@@ -225,7 +225,7 @@ impl LLMHandler {
                     ErrorCode::LLMProviderNotFound,
                     ErrorCategory::LLM,
                     ErrorSeverity::High,
-                    format!("Provider '{}' not found", provider_name)
+                    &format!("Provider '{}' not found", provider_name)
                 ))?
                 .clone_box()
         };

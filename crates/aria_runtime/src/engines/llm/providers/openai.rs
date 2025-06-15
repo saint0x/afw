@@ -12,6 +12,7 @@ use crate::engines::llm::{LLMProvider, types::*};
 use crate::errors::{AriaResult, AriaError, ErrorCode, ErrorCategory, ErrorSeverity};
 
 /// Production-grade OpenAI provider with streaming, function calling, and comprehensive error handling
+#[derive(Clone)]
 pub struct OpenAIProvider {
     client: Client,
     api_key: String,
@@ -259,26 +260,25 @@ impl OpenAIProvider {
             let error_details = error_response.error;
             
             let (code, severity) = match status {
-                401 => (ErrorCode::AuthenticationFailed, ErrorSeverity::Critical),
-                402 => (ErrorCode::LLMApiError, ErrorSeverity::High), // Quota exceeded
-                429 => (ErrorCode::LLMApiError, ErrorSeverity::Medium), // Rate limited
-                400 => (ErrorCode::LLMInvalidResponse, ErrorSeverity::High),
-                500..=599 => (ErrorCode::LLMApiError, ErrorSeverity::Medium),
-                _ => (ErrorCode::LLMApiError, ErrorSeverity::Medium),
+                400 => (ErrorCode::LLMInvalidRequest, ErrorSeverity::Medium),
+                401 => (ErrorCode::LLMAuthentication, ErrorSeverity::Critical),
+                429 => (ErrorCode::LLMTokenLimitExceeded, ErrorSeverity::Medium),
+                500..=599 => (ErrorCode::LLMProviderError, ErrorSeverity::High),
+                _ => (ErrorCode::LLMError, ErrorSeverity::Medium),
             };
 
             AriaError::new(
                 code,
                 ErrorCategory::LLM,
                 severity,
-                format!("OpenAI API error ({}): {}", status, error_details.message)
+                &format!("OpenAI API error ({}): {}", status, error_details.message)
             )
         } else {
             AriaError::new(
-                ErrorCode::LLMApiError,
+                ErrorCode::LLMError,
                 ErrorCategory::LLM,
                 ErrorSeverity::Medium,
-                format!("OpenAI API error ({}): {}", status, body)
+                &format!("OpenAI API error ({}): {}", status, body)
             )
         }
     }
@@ -299,71 +299,56 @@ impl LLMProvider for OpenAIProvider {
     }
 
     async fn initialize(&self) -> AriaResult<()> {
-        // Test the API key with a simple request
-        let test_request = OpenAIRequest {
-            model: "gpt-3.5-turbo".to_string(),
-            messages: vec![OpenAIMessage {
-                role: "user".to_string(),
-                content: Some("test".to_string()),
-                tool_calls: None,
-                tool_call_id: None,
-            }],
-            temperature: 0.0,
-            max_tokens: Some(1),
-            stream: false,
-            tools: None,
-            tool_choice: None,
-        };
-
-        let response = timeout(
-            Duration::from_secs(10),
-            self.client.post(&format!("{}/chat/completions", self.base_url))
-                .json(&test_request)
-                .send()
-        ).await
-        .map_err(|_| AriaError::new(
-            ErrorCode::LLMTimeout,
-            ErrorCategory::LLM,
-            ErrorSeverity::Medium,
-            "OpenAI initialization timeout"
-        ))?
-        .map_err(|e| AriaError::new(
-            ErrorCode::LLMApiError,
-            ErrorCategory::LLM,
-            ErrorSeverity::High,
-            format!("OpenAI initialization failed: {}", e)
-        ))?;
-
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let body = response.text().await.unwrap_or_default();
-            return Err(self.handle_api_error(status, &body));
+        if self.api_key.is_empty() {
+            return Err(AriaError::new(
+                ErrorCode::LLMProviderNotFound,
+                ErrorCategory::LLM,
+                ErrorSeverity::Critical,
+                "OpenAI API key not provided"
+            ));
         }
-
-        Ok(())
+        
+        // Test API key with a minimal request
+        match self.health_check().await {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(AriaError::new(
+                ErrorCode::LLMProviderNotFound,
+                ErrorCategory::LLM,
+                ErrorSeverity::Critical,
+                &format!("OpenAI initialization failed: {}", "API key validation failed")
+            )),
+            Err(e) => Err(AriaError::new(
+                ErrorCode::LLMProviderNotFound,
+                ErrorCategory::LLM,
+                ErrorSeverity::Critical,
+                &format!("OpenAI initialization failed: {}", e)
+            )),
+        }
     }
 
     async fn complete(&self, request: LLMRequest) -> AriaResult<LLMResponse> {
         let openai_request = self.convert_request(&request);
-
-        let response = timeout(
+        
+        let response = match tokio::time::timeout(
             Duration::from_secs(self.timeout_seconds),
             self.client.post(&format!("{}/chat/completions", self.base_url))
                 .json(&openai_request)
                 .send()
-        ).await
-        .map_err(|_| AriaError::new(
-            ErrorCode::LLMTimeout,
-            ErrorCategory::LLM,
-            ErrorSeverity::Medium,
-            format!("OpenAI request timeout after {} seconds", self.timeout_seconds)
-        ))?
-        .map_err(|e| AriaError::new(
-            ErrorCode::LLMApiError,
-            ErrorCategory::LLM,
-            ErrorSeverity::High,
-            format!("OpenAI request failed: {}", e)
-        ))?;
+        ).await {
+            Ok(Ok(response)) => response,
+            Ok(Err(e)) => return Err(AriaError::new(
+                ErrorCode::LLMApiError,
+                ErrorCategory::LLM,
+                ErrorSeverity::High,
+                &format!("OpenAI request failed: {}", e)
+            )),
+            Err(_) => return Err(AriaError::new(
+                ErrorCode::LLMApiError,
+                ErrorCategory::LLM,
+                ErrorSeverity::High,
+                &format!("OpenAI request timeout after {} seconds", self.timeout_seconds)
+            )),
+        };
 
         if !response.status().is_success() {
             let status = response.status().as_u16();
@@ -376,7 +361,7 @@ impl LLMProvider for OpenAIProvider {
                 ErrorCode::LLMInvalidResponse,
                 ErrorCategory::LLM,
                 ErrorSeverity::High,
-                format!("Failed to parse OpenAI response: {}", e)
+                &format!("Failed to parse OpenAI response: {}", e)
             ))?;
 
         self.convert_response(openai_response)
@@ -386,7 +371,7 @@ impl LLMProvider for OpenAIProvider {
         let mut openai_request = self.convert_request(&request);
         openai_request.stream = true;
 
-        let response = timeout(
+        let response = tokio::time::timeout(
             Duration::from_secs(self.timeout_seconds),
             self.client.post(&format!("{}/chat/completions", self.base_url))
                 .json(&openai_request)
@@ -396,13 +381,13 @@ impl LLMProvider for OpenAIProvider {
             ErrorCode::LLMTimeout,
             ErrorCategory::LLM,
             ErrorSeverity::Medium,
-            format!("OpenAI stream request timeout after {} seconds", self.timeout_seconds)
+            &format!("OpenAI stream request timeout after {} seconds", self.timeout_seconds)
         ))?
         .map_err(|e| AriaError::new(
-            ErrorCode::LLMApiError,
+            ErrorCode::LLMError,
             ErrorCategory::LLM,
             ErrorSeverity::High,
-            format!("OpenAI stream request failed: {}", e)
+            &format!("OpenAI stream request failed: {}", e)
         ))?;
 
         if !response.status().is_success() {
@@ -416,20 +401,27 @@ impl LLMProvider for OpenAIProvider {
     }
 
     async fn health_check(&self) -> AriaResult<bool> {
-        match self.initialize().await {
-            Ok(_) => Ok(true),
-            Err(_) => Ok(false),
+        // Simple health check with minimal request using raw HTTP
+        let test_request = serde_json::json!({
+            "model": "gpt-3.5-turbo",
+            "messages": [{"role": "user", "content": "test"}],
+            "max_tokens": 1
+        });
+        
+        match tokio::time::timeout(
+            Duration::from_secs(self.timeout_seconds),
+            self.client.post(&format!("{}/chat/completions", self.base_url))
+                .json(&test_request)
+                .send()
+        ).await {
+            Ok(Ok(response)) => Ok(response.status().is_success()),
+            Ok(Err(_)) => Ok(false),
+            Err(_) => Ok(false), // Timeout means not healthy
         }
     }
 
     fn clone_box(&self) -> Box<dyn LLMProvider> {
-        Box::new(OpenAIProvider {
-            client: self.client.clone(),
-            api_key: self.api_key.clone(),
-            base_url: self.base_url.clone(),
-            default_model: self.default_model.clone(),
-            timeout_seconds: self.timeout_seconds,
-        })
+        Box::new(self.clone())
     }
 }
 
@@ -487,7 +479,7 @@ impl OpenAIStreamWrapper {
                             ErrorCode::LLMInvalidResponse,
                             ErrorCategory::LLM,
                             ErrorSeverity::Medium,
-                            format!("Failed to parse stream chunk: {}", e),
+                            &format!("Failed to parse stream chunk: {}", e),
                         )));
                     }
                 }
@@ -518,10 +510,10 @@ impl Stream for OpenAIStreamWrapper {
                 Poll::Ready(Some(Err(e))) => {
                     // The underlying byte stream produced an error
                     return Poll::Ready(Some(Err(AriaError::new(
-                        ErrorCode::LLMApiError,
+                        ErrorCode::LLMError,
                         ErrorCategory::LLM,
                         ErrorSeverity::High,
-                        format!("Underlying stream error: {}", e),
+                        &format!("Underlying stream error: {}", e),
                     ))));
                 }
                 Poll::Ready(None) => {
@@ -534,7 +526,7 @@ impl Stream for OpenAIStreamWrapper {
                             ErrorCode::LLMInvalidResponse,
                             ErrorCategory::LLM,
                             ErrorSeverity::Medium,
-                            "Stream ended with incomplete data".to_string(),
+                            "Stream ended with incomplete data",
                         ))))
                     };
                 }
