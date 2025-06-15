@@ -12,6 +12,10 @@ path = "../../script.rs"
 name = "multi-tool-demo"
 path = "../../script2.rs"
 
+[[bin]]
+name = "standard-tools-demo"
+path = "../../script3.rs"
+
 [dependencies]
 # Async runtime
 tokio = { version = "1.0", features = ["full"] }

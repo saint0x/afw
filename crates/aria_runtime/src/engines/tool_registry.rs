@@ -3,7 +3,15 @@ use crate::engines::llm::types::{LLMConfig, LLMMessage, LLMRequest};
 use crate::engines::llm::LLMHandler;
 use crate::errors::{AriaError, AriaResult, ErrorCategory, ErrorCode, ErrorSeverity};
 use crate::types::{self, ResourceRequirements, ToolResult};
-use crate::tools::standard::{create_plan_tool_handler, ponder_tool_handler};
+use crate::tools::standard::{
+    create_plan_tool_handler, 
+    ponder_tool_handler,
+    web_search_tool_handler,
+    write_file_tool_handler,
+    read_file_tool_handler,
+    parse_document_tool_handler,
+    write_code_tool_handler
+};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -111,6 +119,11 @@ impl ToolRegistry {
             let builtin_tools = vec![
                 Self::create_ponder_tool_static(),
                 Self::create_create_plan_tool_static(),
+                Self::create_web_search_tool_static(),
+                Self::create_write_file_tool_static(),
+                Self::create_read_file_tool_static(),
+                Self::create_parse_document_tool_static(),
+                Self::create_write_code_tool_static(),
                 Self::create_calculator_tool_static(),
                 Self::create_text_analyzer_tool_static(),
                 Self::create_file_writer_tool_static(),
@@ -237,6 +250,123 @@ impl ToolRegistry {
             security_level: SecurityLevel::Safe,
         }
     }
+
+    fn create_web_search_tool_static() -> RegistryEntry {
+        RegistryEntry {
+            name: "webSearchTool".to_string(),
+            description: "Search the web using Serper API with result caching and metadata extraction".to_string(),
+            parameters: serde_json::json!({ 
+                "type": "object", 
+                "properties": { 
+                    "query": { "type": "string", "description": "The search query" },
+                    "type": { "type": "string", "description": "Type of search to perform" },
+                    "num_results": { "type": "number", "description": "Number of results to return" }
+                }, 
+                "required": ["query"] 
+            }),
+            tool_type: ToolType::LLM { provider: "openai".to_string(), model: "gpt-4".to_string() },
+            bundle_id: None,
+            version: "1.0.0".to_string(),
+            capabilities: vec!["web_search".to_string(), "information_retrieval".to_string()],
+            resource_requirements: ResourceRequirements::default(),
+            security_level: SecurityLevel::Limited,
+        }
+    }
+
+    fn create_write_file_tool_static() -> RegistryEntry {
+        RegistryEntry {
+            name: "writeFileTool".to_string(),
+            description: "Write content to files with automatic directory creation and metadata extraction".to_string(),
+            parameters: serde_json::json!({ 
+                "type": "object", 
+                "properties": { 
+                    "path": { "type": "string", "description": "File path (legacy)" },
+                    "filePath": { "type": "string", "description": "File path to write to" },
+                    "content": { "type": "string", "description": "Content to write" },
+                    "encoding": { "type": "string", "description": "File encoding (default: utf-8)" }
+                }, 
+                "required": ["content"] 
+            }),
+            tool_type: ToolType::LLM { provider: "openai".to_string(), model: "gpt-4".to_string() },
+            bundle_id: None,
+            version: "1.0.0".to_string(),
+            capabilities: vec!["file_operations".to_string(), "content_creation".to_string()],
+            resource_requirements: ResourceRequirements::default(),
+            security_level: SecurityLevel::Limited,
+        }
+    }
+
+    fn create_read_file_tool_static() -> RegistryEntry {
+        RegistryEntry {
+            name: "readFileTool".to_string(),
+            description: "Read file contents with format detection and comprehensive metadata".to_string(),
+            parameters: serde_json::json!({ 
+                "type": "object", 
+                "properties": { 
+                    "path": { "type": "string", "description": "File path (legacy)" },
+                    "filePath": { "type": "string", "description": "File path to read from" },
+                    "format": { "type": "string", "description": "Expected file format" }
+                }, 
+                "required": [] 
+            }),
+            tool_type: ToolType::LLM { provider: "openai".to_string(), model: "gpt-4".to_string() },
+            bundle_id: None,
+            version: "1.0.0".to_string(),
+            capabilities: vec!["file_operations".to_string(), "content_reading".to_string()],
+            resource_requirements: ResourceRequirements::default(),
+            security_level: SecurityLevel::Safe,
+        }
+    }
+
+    fn create_parse_document_tool_static() -> RegistryEntry {
+        RegistryEntry {
+            name: "parseDocumentTool".to_string(),
+            description: "LLM-powered document analysis with key point extraction and summarization".to_string(),
+            parameters: serde_json::json!({ 
+                "type": "object", 
+                "properties": { 
+                    "content": { "type": "string", "description": "Document content to analyze" },
+                    "fileContent": { "type": "string", "description": "Document content to analyze (alias)" },
+                    "format": { "type": "string", "description": "Document format" },
+                    "extractionType": { "type": "string", "description": "Type of extraction to perform" }
+                }, 
+                "required": [] 
+            }),
+            tool_type: ToolType::LLM { provider: "openai".to_string(), model: "gpt-4".to_string() },
+            bundle_id: None,
+            version: "1.0.0".to_string(),
+            capabilities: vec!["document_analysis".to_string(), "content_extraction".to_string(), "summarization".to_string()],
+            resource_requirements: ResourceRequirements::default(),
+            security_level: SecurityLevel::Safe,
+        }
+    }
+
+    fn create_write_code_tool_static() -> RegistryEntry {
+        RegistryEntry {
+            name: "writeCodeTool".to_string(),
+            description: "LLM-powered code generation with language detection, file saving, and explanation".to_string(),
+            parameters: serde_json::json!({ 
+                "type": "object", 
+                "properties": { 
+                    "prompt": { "type": "string", "description": "Code generation prompt" },
+                    "spec": { "type": "string", "description": "Code specification" },
+                    "query": { "type": "string", "description": "Code query" },
+                    "specification": { "type": "string", "description": "Code specification (alias)" },
+                    "language": { "type": "string", "description": "Programming language" },
+                    "context": { "type": "object", "description": "Additional context" },
+                    "components": { "type": "object", "description": "Components to implement" },
+                    "filePath": { "type": "string", "description": "File path to save code" }
+                }, 
+                "required": [] 
+            }),
+            tool_type: ToolType::LLM { provider: "openai".to_string(), model: "gpt-4".to_string() },
+            bundle_id: None,
+            version: "1.0.0".to_string(),
+            capabilities: vec!["code_generation".to_string(), "programming".to_string(), "file_operations".to_string()],
+            resource_requirements: ResourceRequirements::default(),
+            security_level: SecurityLevel::Limited,
+        }
+    }
 }
 
 #[async_trait]
@@ -262,6 +392,26 @@ impl ToolRegistryInterface for ToolRegistry {
                     "ponderTool" => {
                         println!("🔧 Using specialized ponderTool implementation");
                         ponder_tool_handler(parameters, &self.llm_handler).await
+                    }
+                    "webSearchTool" => {
+                        println!("🔧 Using specialized webSearchTool implementation");
+                        web_search_tool_handler(parameters, &self.llm_handler).await
+                    }
+                    "writeFileTool" => {
+                        println!("🔧 Using specialized writeFileTool implementation");
+                        write_file_tool_handler(parameters, &self.llm_handler).await
+                    }
+                    "readFileTool" => {
+                        println!("🔧 Using specialized readFileTool implementation");
+                        read_file_tool_handler(parameters, &self.llm_handler).await
+                    }
+                    "parseDocumentTool" => {
+                        println!("🔧 Using specialized parseDocumentTool implementation");
+                        parse_document_tool_handler(parameters, &self.llm_handler).await
+                    }
+                    "writeCodeTool" => {
+                        println!("🔧 Using specialized writeCodeTool implementation");
+                        write_code_tool_handler(parameters, &self.llm_handler).await
                     }
                     _ => {
                         // Generic LLM tool execution for other tools
