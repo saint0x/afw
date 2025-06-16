@@ -261,7 +261,7 @@ async fn handle_ping_command(
     let mut from_request = tonic::Request::new(GetContainerStatusRequest { 
         container_id: from_container.clone() 
     });
-    from_request.set_timeout(Duration::from_secs(30));
+    from_request.set_timeout(Duration::from_secs(60));
     
     let from_status = match client.get_container_status(from_request).await {
         Ok(response) => {
@@ -292,7 +292,7 @@ async fn handle_ping_command(
         let mut target_request = tonic::Request::new(GetContainerStatusRequest {
             container_id: target.clone(),
         });
-        target_request.set_timeout(Duration::from_secs(30));
+        target_request.set_timeout(Duration::from_secs(60));
         
         match client.get_container_status(target_request).await {
             Ok(response) => {
@@ -494,7 +494,7 @@ async fn handle_exec_command(
         environment,
         capture_output: true,
     });
-    exec_request.set_timeout(Duration::from_secs(30)); // Generous timeout for exec commands
+    exec_request.set_timeout(Duration::from_secs(120)); // Extended timeout for exec commands (2 minutes)
 
     match client.exec_container(exec_request).await {
         Ok(response) => {

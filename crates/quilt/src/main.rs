@@ -339,29 +339,40 @@ impl QuiltService for QuiltServiceImpl {
                     }
                 };
 
-                // Execute command using nsenter (direct execution, not through old runtime)
+                // Execute command using nsenter (async execution)
                 let command_str = req.command.join(" ");
-                let exec_cmd = if req.capture_output {
-                    format!("nsenter -t {} -p -m -n -u -i -- /bin/sh -c '{}'", pid, command_str)
-                } else {
-                    format!("nsenter -t {} -p -m -n -u -i -- /bin/sh -c '{}' >/dev/null 2>&1", pid, command_str)
-                };
+                ConsoleLogger::debug(&format!("🚀 [GRPC] Executing: nsenter -t {} -p -m -n -u -i -- /bin/sh -c '{}'", pid, command_str));
 
-                match utils::command::CommandExecutor::execute_shell(&exec_cmd) {
-                    Ok(result) => {
-                        ConsoleLogger::debug(&format!("✅ [GRPC] Exec completed with exit code: {}", result.exit_code.unwrap_or(-1)));
+                // Use async tokio::process::Command instead of blocking std::process::Command
+                let output = tokio::process::Command::new("nsenter")
+                    .args(&[
+                        "-t", &pid.to_string(),
+                        "-p", "-m", "-n", "-u", "-i",
+                        "--", "/bin/sh", "-c", &command_str
+                    ])
+                    .output()
+                    .await;
+
+                match output {
+                    Ok(output) => {
+                        let exit_code = output.status.code().unwrap_or(-1);
+                        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                        let success = output.status.success();
                         
-                        let error_message = if !result.success {
-                            result.stderr.clone()
+                        ConsoleLogger::debug(&format!("✅ [GRPC] Exec completed with exit code: {}", exit_code));
+                        
+                        let error_message = if !success && !stderr.is_empty() {
+                            stderr.clone()
                         } else {
                             String::new()
                         };
 
                         Ok(Response::new(ExecContainerResponse {
-                            success: result.success,
-                            exit_code: result.exit_code.unwrap_or(-1),
-                            stdout: result.stdout,
-                            stderr: result.stderr,
+                            success,
+                            exit_code,
+                            stdout,
+                            stderr,
                             error_message,
                         }))
                     }
@@ -372,7 +383,7 @@ impl QuiltService for QuiltServiceImpl {
                             exit_code: -1,
                             stdout: String::new(),
                             stderr: String::new(),
-                            error_message: e,
+                            error_message: format!("Failed to execute nsenter: {}", e),
                         }))
                     }
                 }
