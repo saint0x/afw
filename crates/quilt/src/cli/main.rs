@@ -146,11 +146,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create a channel with extended timeout configuration for concurrent operations
     let channel = tonic::transport::Channel::from_shared(cli.server_addr.clone())?
-        .timeout(Duration::from_secs(60))  // Increased from 10s to handle concurrent load
-        .connect_timeout(Duration::from_secs(10))  // Increased connection timeout
-        .tcp_keepalive(Some(Duration::from_secs(60)))
-        .http2_keep_alive_interval(Duration::from_secs(30))
+        .timeout(Duration::from_secs(300))  // 5 minutes for complex operations
+        .connect_timeout(Duration::from_secs(30))  // Extended connection timeout
+        .tcp_keepalive(Some(Duration::from_secs(300)))  // 5 minute TCP keep-alive
+        .http2_keep_alive_interval(Duration::from_secs(120))  // 2 minute HTTP/2 keep-alive
+        .keep_alive_timeout(Duration::from_secs(60))  // 1 minute keep-alive timeout
         .keep_alive_while_idle(true)
+        .http2_adaptive_window(true)  // Enable adaptive window sizing for better performance
         .connect()
         .await
         .map_err(|e| {
