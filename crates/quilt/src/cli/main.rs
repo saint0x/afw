@@ -212,6 +212,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 enable_uts_namespace: uts_ns,
                 enable_ipc_namespace: ipc_ns,
                 enable_network_namespace: net_ns,
+                auto_start: false,
             });
 
             match client.create_container(request).await {
@@ -249,6 +250,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         _ => ContainerStatus::Failed,
                     };
                     let status_str = match status_enum {
+                        ContainerStatus::Unspecified => "UNKNOWN",
                         ContainerStatus::Pending => "PENDING",
                         ContainerStatus::Running => "RUNNING",
                         ContainerStatus::Exited => "EXITED",
@@ -379,6 +381,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 enable_mount_namespace: true,
                 enable_uts_namespace: true,
                 enable_ipc_namespace: true,
+                auto_start: false,
             };
 
             match client.create_container(tonic::Request::new(create_request)).await {

@@ -91,6 +91,11 @@ impl ContainerManager {
         Self { pool }
     }
     
+    /// Check if a PID is still alive by checking /proc filesystem
+    fn is_pid_alive(pid: i64) -> bool {
+        std::path::Path::new(&format!("/proc/{}", pid)).exists()
+    }
+    
     pub async fn create_container(&self, config: ContainerConfig) -> SyncResult<()> {
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
         let environment_json = serde_json::to_string(&config.environment)?;
@@ -250,14 +255,51 @@ impl ContainerManager {
         match row {
             Some(row) => {
                 let state_str: String = row.get("state");
-                let state = ContainerState::from_string(&state_str)?;
+                let mut state = ContainerState::from_string(&state_str)?;
+                let mut pid: Option<i64> = row.get("pid");
+                let mut exit_code: Option<i64> = row.get("exit_code");
+                
+                // CRITICAL FIX: Validate PID is still alive if container claims to be running
+                if state == ContainerState::Running {
+                    if let Some(container_pid) = pid {
+                        // Check if the process actually exists
+                        if !Self::is_pid_alive(container_pid) {
+                            tracing::warn!("Container {} claims to be running but PID {} is dead - auto-correcting state", container_id, container_pid);
+                            
+                            // Auto-correct the stale state
+                            state = ContainerState::Exited;
+                            pid = None;
+                            exit_code = Some(127); // Process died unexpectedly
+                            
+                            // Update database asynchronously (don't block the query)
+                            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs() as i64;
+                            let _ = sqlx::query("UPDATE containers SET state = 'exited', pid = NULL, exit_code = 127, exited_at = ?, updated_at = ? WHERE id = ?")
+                                .bind(now)
+                                .bind(now)
+                                .bind(container_id)
+                                .execute(&self.pool)
+                                .await;
+                        }
+                    } else {
+                        // Running state without PID is invalid
+                        tracing::warn!("Container {} claims to be running but has no PID - correcting state", container_id);
+                        state = ContainerState::Error;
+                        
+                        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs() as i64;
+                        let _ = sqlx::query("UPDATE containers SET state = 'error', updated_at = ? WHERE id = ?")
+                            .bind(now)
+                            .bind(container_id)
+                            .execute(&self.pool)
+                            .await;
+                    }
+                }
                 
                 Ok(ContainerStatus {
                     id: row.get("id"),
                     name: row.get("name"),
                     state,
-                    pid: row.get("pid"),
-                    exit_code: row.get("exit_code"),
+                    pid,
+                    exit_code,
                     ip_address: row.get("ip_address"),
                     created_at: row.get("created_at"),
                     started_at: row.get("started_at"),

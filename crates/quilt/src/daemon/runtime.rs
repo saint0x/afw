@@ -589,25 +589,25 @@ impl ContainerRuntime {
         }
 
         ConsoleLogger::success("All essential busybox symlinks verified");
-        Ok(())
-    }
+                Ok(())
+            }
 
     /// Create a symlink to busybox for a utility
     fn create_busybox_symlink(&self, util_path: &str, busybox_path: &str) -> Result<(), String> {
         // Create symlink to busybox
         match std::os::unix::fs::symlink("busybox", util_path) {
-            Ok(_) => {
+                            Ok(_) => {
                 let util_name = std::path::Path::new(util_path)
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("unknown");
                 ConsoleLogger::success(&format!("Created busybox symlink: {}", util_name));
-                Ok(())
-            }
-            Err(e) => Err(format!("Failed to create symlink {}: {}", util_path, e))
-        }
+        Ok(())
     }
-
+            Err(e) => Err(format!("Failed to create symlink {}: {}", util_path, e))
+            }
+        }
+        
 
 
 
