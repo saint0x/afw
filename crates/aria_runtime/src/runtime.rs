@@ -34,7 +34,7 @@ pub struct AriaRuntime {
 impl AriaRuntime {
     /// Creates a new instance of the Aria Runtime.
     pub async fn new(config: RuntimeConfiguration) -> AriaResult<Self> {
-        let engines = Arc::new(AriaEngines::new());
+        let engines = Arc::new(AriaEngines::new().await);
         Ok(Self {
             config,
             engines,
@@ -136,7 +136,7 @@ impl AriaRuntime {
                 self.execute_planned_task(task, context, &mut conversation).await?
             }
             RuntimeExecutionMode::ContainerWorkload if task_analysis.requires_containers => {
-                self.execute_container_workload(task, context, &mut conversation).await?
+                self._internal_execute_container_workload(task, context, &mut conversation).await?
             }
             _ => {
                 self.execute_single_shot_task(task, context, &mut conversation).await?
@@ -384,14 +384,14 @@ impl AriaRuntime {
     }
 
     /// Execute container workload (Aria enhancement)
-    async fn execute_container_workload(
+    async fn _internal_execute_container_workload(
         &self,
         task: &str,
         context: &mut RuntimeContext,
         conversation: &mut ConversationJSON,
     ) -> AriaResult<InternalExecutionResult> {
-        // This will be implemented when we create the container engine
-        // For now, fall back to regular execution
+        // This is a placeholder for a more complex container execution flow.
+        // For now, it's a simple wrapper around a tool call.
         self.add_conversation_turn(conversation, ConversationRole::Assistant, 
             "Container workload execution not yet implemented, falling back to regular execution", None);
         

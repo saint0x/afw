@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use tonic::{transport::Server, Request, Response, Status};
 use uuid::Uuid;
 use sqlx::Row;
+use std::env;
 
 // Include the generated protobuf code
 pub mod quilt {
@@ -36,8 +37,16 @@ pub struct QuiltServiceImpl {
 
 impl QuiltServiceImpl {
     pub async fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        // Initialize sync engine with database
-        let sync_engine = Arc::new(SyncEngine::new("quilt.db").await?);
+        // Find the executable's path
+        let mut db_path = env::current_exe()?;
+        db_path.pop(); // Remove the executable name
+        db_path.push("quilt.db");
+
+        let db_path_str = db_path.to_str().ok_or("Failed to convert DB path to string")?;
+        ConsoleLogger::info(&format!("Initializing sync engine with database at: {}", db_path_str));
+
+        // Initialize sync engine with the robust database path
+        let sync_engine = Arc::new(SyncEngine::new(db_path_str).await?);
         
         // Start background services for monitoring and cleanup
         sync_engine.start_background_services().await?;
@@ -267,12 +276,18 @@ impl QuiltService for QuiltServiceImpl {
                     Ok(result) => {
                         ConsoleLogger::debug(&format!("✅ [GRPC] Exec completed with exit code: {}", result.exit_code.unwrap_or(-1)));
                         
+                        let error_message = if !result.success {
+                            result.stderr.clone()
+                        } else {
+                            String::new()
+                        };
+
                         Ok(Response::new(ExecContainerResponse {
                             success: result.success,
                             exit_code: result.exit_code.unwrap_or(-1),
                             stdout: result.stdout,
                             stderr: result.stderr,
-                            error_message: String::new(),
+                            error_message,
                         }))
                     }
                     Err(e) => {

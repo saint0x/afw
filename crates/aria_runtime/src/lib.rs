@@ -33,13 +33,16 @@ pub mod runtime;
 pub mod tools;
 pub mod types;
 
+use std::sync::Arc;
+use futures::future::BoxFuture;
+
 pub use errors::{AriaError, AriaResult};
-pub use types::{RuntimeConfiguration, RuntimeResult};
+pub use types::{RuntimeConfiguration, RuntimeResult, ContainerSpec, ToolResult, RuntimeContext};
 pub use runtime::AriaRuntime;
+pub use deep_size::DeepUuid;
 
 use crate::engines::{
     AriaEngines,
-    Engine,
     execution::ExecutionEngine,
     planning::PlanningEngine,
     conversation::ConversationEngine,
@@ -48,9 +51,10 @@ use crate::engines::{
     context_manager::ContextManagerEngine,
     llm::LLMHandler,
     system_prompt::SystemPromptService,
+    container::quilt::QuiltService,
+    config::QuiltConfig,
+    ExecutionEngineInterface,
 };
-use std::{collections::HashMap, sync::Arc, path::PathBuf};
-use tokio::sync::RwLock;
 
 /// Runtime version
 pub const RUNTIME_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -78,25 +82,23 @@ pub async fn create_aria_runtime(_config: RuntimeConfiguration) -> AriaResult<Ar
 }
 
 impl AriaEngines {
-    pub fn new() -> Self {
-        // Get singleton LLM handler (matches Symphony SDK pattern)
+    pub async fn new() -> Self {
         let llm_handler = LLMHandler::get_instance();
-
-        // Create tool registry with LLM handler
         let tool_registry = ToolRegistry::new(Arc::clone(&llm_handler));
-
-        // Create system prompt service
         let system_prompt = SystemPromptService::new();
+        let quilt_config = QuiltConfig {
+            endpoint: "http://127.0.0.1:50051".to_string(),
+        };
+        let quilt_service = QuiltService::new(&quilt_config).await.expect("Failed to connect to Quilt daemon");
 
-        // Create all engines with concrete types
         let execution = ExecutionEngine::new(
-            Arc::new(tool_registry.clone()) as Arc<dyn crate::engines::tool_registry::ToolRegistryInterface>,
+            Arc::new(tool_registry.clone()) as Arc<dyn ToolRegistryInterface>,
             Arc::clone(&llm_handler),
-            None, // No container manager for now
+            quilt_service.clone(),
         );
         
         let planning = PlanningEngine::new(
-            Arc::new(tool_registry.clone()) as Arc<dyn crate::engines::tool_registry::ToolRegistryInterface>
+            Arc::new(tool_registry.clone()) as Arc<dyn ToolRegistryInterface>
         );
         
         let conversation = ConversationEngine::new(
@@ -104,7 +106,7 @@ impl AriaEngines {
         );
         
         let reflection = ReflectionEngine::new(
-            Arc::new(tool_registry.clone()) as Arc<dyn crate::engines::tool_registry::ToolRegistryInterface>
+            Arc::new(tool_registry.clone()) as Arc<dyn ToolRegistryInterface>
         );
         
         let context_manager = ContextManagerEngine::new(
@@ -120,6 +122,19 @@ impl AriaEngines {
             llm_handler,
             tool_registry,
             system_prompt,
+            quilt_service,
         }
+    }
+}
+
+impl AriaRuntime {
+    pub async fn execute_container_workload(
+        &self,
+        spec: &ContainerSpec,
+        exec_command: &Vec<String>,
+        context: Option<&RuntimeContext>,
+        session_id: DeepUuid,
+    ) -> AriaResult<ToolResult> {
+        self.engines.execution.execute_container_workload(spec, exec_command, context, session_id).await
     }
 } 

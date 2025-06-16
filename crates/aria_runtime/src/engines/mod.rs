@@ -15,7 +15,7 @@ use crate::engines::context_manager::ContextManagerEngine;
 use crate::engines::llm::{LLMHandler, LLMHandlerInterface};
 use crate::engines::tool_registry::ToolRegistry;
 use crate::engines::system_prompt::SystemPromptService;
-// Removed downcast dependency for trait object compatibility
+use crate::engines::container::quilt::QuiltService;
 use std::collections::HashMap;
 
 pub mod execution;
@@ -26,9 +26,10 @@ pub mod context_manager;
 pub mod llm;
 pub mod tool_registry;
 pub mod system_prompt;
+pub mod container;
+pub mod config;
 
 /// Main orchestrator for all Aria runtime engines
-/// Uses concrete types for better performance and type safety
 pub struct AriaEngines {
     pub execution: ExecutionEngine,
     pub planning: PlanningEngine,
@@ -38,6 +39,7 @@ pub struct AriaEngines {
     pub llm_handler: std::sync::Arc<LLMHandler>,
     pub tool_registry: ToolRegistry,
     pub system_prompt: SystemPromptService,
+    pub quilt_service: QuiltService,
 }
 
 impl AriaEngines {
@@ -172,7 +174,8 @@ pub trait ExecutionEngineInterface: Engine {
     async fn execute_container_workload(
         &self,
         spec: &ContainerSpec,
-        context: &RuntimeContext,
+        exec_command: &Vec<String>,
+        context: Option<&RuntimeContext>,
         session_id: DeepUuid,
     ) -> AriaResult<ToolResult>;
 
@@ -248,7 +251,7 @@ pub trait ReflectionEngineInterface: Engine {
     ) -> AriaResult<Reflection>;
 }
 
-/// Interface for context managers
+/// Interface for context management engines
 #[async_trait]
 pub trait ContextManagerInterface: Send + Sync {
     /// Set execution plan
@@ -273,7 +276,7 @@ pub trait ContextManagerInterface: Send + Sync {
     async fn serialize_context(&self, format: context_manager::SerializationFormat) -> AriaResult<Vec<u8>>;
 }
 
-/// Container manager interface for container execution
+/// Interface for the container manager
 #[async_trait]
 pub trait ContainerManagerInterface: Send + Sync {
     async fn create_container(
@@ -297,7 +300,7 @@ pub trait ContainerManagerInterface: Send + Sync {
     async fn health_check(&self) -> AriaResult<bool>;
 }
 
-/// Result of container execution
+// Result of executing a command in a container
 pub struct ContainerExecutionResult {
     pub exit_code: i32,
     pub stdout: String,
@@ -306,7 +309,7 @@ pub struct ContainerExecutionResult {
     pub resource_usage: Option<ResourceUsage>,
 }
 
-/// Container status information
+// Represents the status of a container
 pub struct ContainerStatus {
     pub id: String,
     pub state: ContainerState,
@@ -317,7 +320,7 @@ pub struct ContainerStatus {
     pub resource_usage: Option<ResourceUsage>,
 }
 
-/// Container state enumeration
+// Represents the possible states of a container
 pub enum ContainerState {
     Created,
     Running,
@@ -326,7 +329,7 @@ pub enum ContainerState {
     Removed,
 }
 
-/// Container information
+// Detailed information about a container
 pub struct ContainerInfo {
     pub id: String,
     pub name: String,
@@ -335,7 +338,7 @@ pub struct ContainerInfo {
     pub session_id: Uuid,
 }
 
-/// ICC server status
+// Status of the Inter-Container Communication (ICC) server
 pub enum ICCServerStatus {
     Starting,
     Running,
@@ -344,7 +347,7 @@ pub enum ICCServerStatus {
     Error(String),
 }
 
-/// ICC connection information
+// Represents an active connection to the ICC server
 pub struct ICCConnection {
     pub id: String,
     pub container_id: String,
@@ -353,7 +356,7 @@ pub struct ICCConnection {
     pub request_count: u32,
 }
 
-/// Handler for ICC tool calls
+// Handler for tool calls coming from the ICC
 #[async_trait]
 pub trait ICCToolHandler: Send + Sync {
     async fn handle_tool_call(
@@ -365,7 +368,7 @@ pub trait ICCToolHandler: Send + Sync {
     ) -> AriaResult<serde_json::Value>;
 }
 
-/// Handler for ICC agent calls
+// Handler for agent calls coming from the ICC
 #[async_trait]
 pub trait ICCAgentHandler: Send + Sync {
     async fn handle_agent_call(

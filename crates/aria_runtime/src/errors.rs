@@ -55,6 +55,7 @@ pub enum ErrorCode {
 
     // Container Errors
     ContainerError,
+    ContainerOperationFailed,
 
     // Bundle Errors
     BundleError,

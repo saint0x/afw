@@ -4,15 +4,18 @@ use crate::engines::llm::types::{LLMConfig, LLMMessage, LLMRequest};
 use crate::engines::llm::LLMHandler;
 use crate::engines::tool_registry::ToolRegistryInterface;
 use crate::engines::system_prompt::SystemPromptService;
+use crate::engines::container::quilt::QuiltService;
 use crate::types::*;
 use crate::errors::{AriaResult, AriaError, ErrorCode, ErrorCategory, ErrorSeverity};
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use uuid::Uuid;
 use serde_json::Value;
 use regex::Regex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use crate::deep_size::{DeepUuid, DeepValue};
+use futures::future::BoxFuture;
 
 /// The ExecutionEngine is responsible for the core "magic" of tool execution.
 /// It preserves Symphony's brilliant unconscious tool execution logic while
@@ -20,8 +23,7 @@ use crate::deep_size::{DeepUuid, DeepValue};
 pub struct ExecutionEngine {
     tool_registry: Arc<dyn ToolRegistryInterface>,
     llm_handler: Arc<LLMHandler>,
-    // TODO: Container manager will be concrete type when implemented
-    // container_manager: Option<Arc<dyn ContainerManagerInterface>>,
+    quilt_service: Arc<Mutex<QuiltService>>,
     system_prompt_service: SystemPromptService,
     max_orchestration_steps: usize,
 }
@@ -30,12 +32,12 @@ impl ExecutionEngine {
     pub fn new(
         tool_registry: Arc<dyn ToolRegistryInterface>,
         llm_handler: Arc<LLMHandler>,
-        _container_manager: Option<()>, // Simplified for now
+        quilt_service: QuiltService,
     ) -> Self {
         Self {
             tool_registry,
             llm_handler,
-            // container_manager,
+            quilt_service: Arc::new(Mutex::new(quilt_service)),
             system_prompt_service: SystemPromptService::new(),
             max_orchestration_steps: 5,
         }
@@ -91,75 +93,96 @@ impl ExecutionEngine {
     }
 
     /// Execute a container workload if container manager is available
-    pub async fn execute_container_workload(
+    pub async fn execute_container_workload_impl(
         &self,
-        _spec: &ContainerSpec,
-        _context: &RuntimeContext,
-        _session_id: DeepUuid,
+        spec: &ContainerSpec,
+        exec_command: &Vec<String>,
+        context_opt: Option<&RuntimeContext>,
+        session_id: DeepUuid,
     ) -> AriaResult<ToolResult> {
-        // TODO: Implement container execution when container manager is ready
-        /*
-        if let Some(container_manager) = &self.container_manager {
-            // Create context environment variables
-            let context_env = self.create_context_environment(context, session_id);
-            
-            // Create and start container
-            let container_id = container_manager.create_container(spec, session_id, context_env).await?;
-            
-            // Execute the workload
-            let result = container_manager.execute_in_container(
-                &container_id,
-                &spec.command,
-                spec.resource_limits.timeout_seconds.unwrap_or(300),
-            ).await;
-            
-            // Cleanup container
-            let _ = container_manager.cleanup_container(&container_id).await;
-            
-            match result {
-                Ok(exec_result) => Ok(ToolResult {
-                    success: exec_result.exit_code == 0,
-                    result: Some(serde_json::json!({
-                        "exit_code": exec_result.exit_code,
-                        "stdout": exec_result.stdout,
-                        "stderr": exec_result.stderr,
-                        "execution_time_ms": exec_result.execution_time_ms
-                    })),
-                    error: if exec_result.exit_code != 0 { 
-                        Some(exec_result.stderr) 
-                    } else { 
-                        None 
-                    },
-                    metadata: HashMap::new(),
-                    execution_time_ms: exec_result.execution_time_ms,
-                    resource_usage: exec_result.resource_usage,
-                }),
-                Err(e) => Ok(ToolResult {
-                    success: false,
-                    result: None,
-                    error: Some(format!("Container execution failed: {}", e)),
-                    metadata: HashMap::new(),
-                    execution_time_ms: 0,
-                    resource_usage: None,
-                }),
+        let mut quilt = self.quilt_service.lock().await;
+
+        let default_context;
+        let context = match context_opt {
+            Some(ctx) => ctx,
+            None => {
+                default_context = RuntimeContext::default_for_session(session_id);
+                &default_context
             }
-        } else {
-            Err(AriaError::new(
-                ErrorCode::ContainerError,
-                ErrorCategory::Container,
-                ErrorSeverity::High,
-                "Container manager not available for workload execution"
-            ))
-        }
-        */
+        };
+
+        let context_env = self.create_context_environment(context, session_id);
         
-        // For now, return a placeholder result
-        Err(AriaError::new(
-            ErrorCode::ContainerError,
-            ErrorCategory::Container,
-            ErrorSeverity::High,
-            "Container execution not yet implemented"
-        ))
+        let container_id = quilt.create_container(
+            spec.image.clone(),
+            spec.command.clone(),
+            context_env,
+        ).await?;
+        
+        // Poll for the container to be in a 'Running' state before proceeding.
+        let start_time = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(20); // 20-second timeout for startup
+
+        loop {
+            if start_time.elapsed() > timeout {
+                // Ensure cleanup happens on timeout
+                let _ = quilt.remove_container(container_id.clone()).await;
+                return Err(AriaError::new(
+                    ErrorCode::ContainerOperationFailed,
+                    ErrorCategory::Container,
+                    ErrorSeverity::High,
+                    &format!("Container {} failed to start within the timeout period", container_id)
+                ));
+            }
+
+            let status = quilt.get_container_status(container_id.clone()).await?;
+            match status.state {
+                ContainerState::Running => {
+                    break; // Container is ready, proceed to execution.
+                },
+                ContainerState::Failed | ContainerState::Exited => {
+                    // Container failed to start, so we clean up and return an error.
+                    let _ = quilt.remove_container(container_id.clone()).await;
+                    return Err(AriaError::new(
+                        ErrorCode::ContainerOperationFailed,
+                        ErrorCategory::Container,
+                        ErrorSeverity::High,
+                        &format!("Container {} entered state {:?} during startup", container_id, status.state)
+                    ));
+                },
+                _ => {
+                    // State is Created or Starting, so we wait and poll again.
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                }
+            }
+        }
+        
+        // Container is running, now execute the specific command.
+        let result = quilt.exec_in_container(container_id.clone(), exec_command.clone()).await;
+
+        // Always attempt to clean up the container after execution.
+        let _ = quilt.remove_container(container_id.clone()).await;
+        
+        match result {
+            Ok(exec_result) => Ok(ToolResult {
+                success: exec_result.exit_code == 0,
+                result: Some(DeepValue(serde_json::json!({
+                    "exit_code": exec_result.exit_code,
+                    "stdout": exec_result.stdout,
+                    "stderr": exec_result.stderr,
+                    "execution_time_ms": exec_result.execution_time_ms
+                }))),
+                error: if exec_result.exit_code != 0 {
+                    Some(exec_result.stderr)
+                } else {
+                    None
+                },
+                metadata: HashMap::new(),
+                execution_time_ms: exec_result.execution_time_ms,
+                resource_usage: exec_result.resource_usage,
+            }),
+            Err(e) => Err(e),
+        }
     }
 
     /// Create context environment variables for container execution
@@ -787,10 +810,11 @@ impl ExecutionEngineInterface for ExecutionEngine {
     async fn execute_container_workload(
         &self,
         spec: &ContainerSpec,
-        context: &RuntimeContext,
+        exec_command: &Vec<String>,
+        context: Option<&RuntimeContext>,
         session_id: DeepUuid,
     ) -> AriaResult<ToolResult> {
-        self.execute_container_workload(spec, context, session_id).await
+        self.execute_container_workload_impl(spec, exec_command, context, session_id).await
     }
 
     fn detect_multi_tool_requirement(&self, task: &str) -> bool {

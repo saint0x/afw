@@ -328,6 +328,29 @@ impl DeepSizeOf for RuntimeContext {
     }
 }
 
+impl RuntimeContext {
+    pub fn default_for_session(session_id: DeepUuid) -> Self {
+        Self {
+            session_id,
+            agent_config: AgentConfig::default(),
+            created_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64,
+            conversation: None,
+            status: ExecutionStatus::Running,
+            current_plan: None,
+            execution_history: vec![],
+            working_memory: Arc::new(RwLock::new(HashMap::new())),
+            insights: vec![],
+            error_history: vec![],
+            current_step: 0,
+            total_steps: 0,
+            remaining_steps: vec![],
+            reflections: vec![],
+            memory_size: 0,
+            max_memory_size: 10 * 1024 * 1024, // 10MB default
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub enum ExecutionStatus {
     Running,
@@ -412,6 +435,37 @@ pub struct ContainerSpec {
     pub resource_limits: ResourceLimits,
     pub network_access: bool,
     pub mount_points: Vec<MountPoint>,
+}
+
+/// The result of executing a command in a container.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, DeepSizeOf)]
+pub struct ContainerExecutionResult {
+    pub exit_code: i32,
+    pub stdout: String,
+    pub stderr: String,
+    pub execution_time_ms: u64,
+    pub resource_usage: Option<ResourceUsage>,
+}
+
+/// The lifecycle state of a container.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, DeepSizeOf)]
+pub enum ContainerState {
+    Created,
+    Running,
+    Exited,
+    Failed,
+}
+
+/// The detailed status of a container.
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
+pub struct ContainerStatus {
+    pub id: String,
+    pub state: ContainerState,
+    pub created_at: u64,
+    pub started_at: Option<u64>,
+    pub finished_at: Option<u64>,
+    pub exit_code: Option<i32>,
+    pub resource_usage: Option<ResourceUsage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
