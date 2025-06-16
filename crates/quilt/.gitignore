@@ -7,5 +7,10 @@ active_containers/
 flake.lock
 result*
 
+# Container images (keep only nixos-production.tar.gz)
+aria-runtime-*.tar.gz
+nixos-dev.tar.gz
+nixos-minimal.tar.gz
+
 ENGINEERING.md
 KUBERNETES.md

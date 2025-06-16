@@ -50,9 +50,9 @@ cargo build --release --target x86_64-unknown-linux-gnu
 ### Create Container
 ```bash
 ./target/x86_64-unknown-linux-gnu/debug/cli create \
-  --image-path ./nixos-minimal.tar.gz \
+  --image-path ./nixos-production.tar.gz \
   --memory-limit 512 \
-  -- /bin/sh -c "echo 'Hello World'; ls /bin"
+  -- /bin/bash -c "echo 'Hello World' && bun --version && node --version"
 ```
 
 ## Testing

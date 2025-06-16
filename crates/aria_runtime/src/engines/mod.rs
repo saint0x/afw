@@ -19,6 +19,7 @@ use crate::engines::container::quilt::QuiltService;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::path::PathBuf;
+use tokio::sync::Mutex;
 
 pub mod execution;
 pub mod planning;
@@ -33,15 +34,15 @@ pub mod config;
 
 /// Main orchestrator for all Aria runtime engines
 pub struct AriaEngines {
-    pub execution: ExecutionEngine,
-    pub planning: PlanningEngine,
-    pub conversation: ConversationEngine,
-    pub reflection: ReflectionEngine,
-    pub context_manager: ContextManagerEngine,
-    pub llm_handler: std::sync::Arc<LLMHandler>,
-    pub tool_registry: ToolRegistry,
-    pub system_prompt: SystemPromptService,
-    pub quilt_service: QuiltService,
+    pub execution: Arc<ExecutionEngine>,
+    pub planning: Arc<PlanningEngine>,
+    pub conversation: Arc<ConversationEngine>,
+    pub reflection: Arc<ReflectionEngine>,
+    pub context_manager: Arc<ContextManagerEngine>,
+    pub llm_handler: Arc<LLMHandler>,
+    pub tool_registry: Arc<ToolRegistry>,
+    pub system_prompt: Arc<SystemPromptService>,
+    pub quilt_service: Arc<Mutex<QuiltService>>,
 }
 
 impl AriaEngines {
@@ -72,24 +73,6 @@ impl AriaEngines {
         self.conversation.health_check() &&
         self.reflection.health_check() &&
         self.context_manager.health_check()
-    }
-
-    pub async fn new() -> Self {
-        let llm_handler = Arc::new(LLMHandler::new(Default::default()));
-        let container_manager = Arc::new(QuiltService::new().await.expect("Failed to create QuiltService"));
-        let tool_registry = Arc::new(ToolRegistry::new(llm_handler.clone(), container_manager.clone()));
-
-        Self {
-            planning: Arc::new(PlanningEngine::new(llm_handler.clone())),
-            execution: Arc::new(ExecutionEngine::new(llm_handler.clone(), container_manager)),
-            reflection: Arc::new(ReflectionEngine::new(llm_handler.clone())),
-            conversation: Arc::new(ConversationEngine::new(llm_handler.clone())),
-            tool_registry,
-            context_manager: Arc::new(ContextManager::new(PathBuf::from("./.aria/sessions"))),
-            llm: llm_handler,
-            system_prompt: Arc::new(SystemPromptService::new(PathBuf::from("./.aria/prompts"))),
-            quilt_service: container_manager,
-        }
     }
 }
 

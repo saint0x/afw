@@ -32,12 +32,12 @@ impl ExecutionEngine {
     pub fn new(
         tool_registry: Arc<dyn ToolRegistryInterface>,
         llm_handler: Arc<LLMHandler>,
-        quilt_service: QuiltService,
+        quilt_service: Arc<Mutex<QuiltService>>,
     ) -> Self {
         Self {
             tool_registry,
             llm_handler,
-            quilt_service: Arc::new(Mutex::new(quilt_service)),
+            quilt_service,
             system_prompt_service: SystemPromptService::new(),
             max_orchestration_steps: 5,
         }
@@ -113,11 +113,15 @@ impl ExecutionEngine {
 
         let context_env = self.create_context_environment(context, session_id);
         
+        // Clean agent-controlled lifecycle: create → start
         let container_id = quilt.create_container(
             spec.image.clone(),
             spec.command.clone(),
             context_env,
         ).await?;
+        
+        // Agent explicitly starts the container
+        quilt.start_container(container_id.clone()).await?;
         
         // Poll for the container to be in a 'Running' state before proceeding.
         let start_time = std::time::Instant::now();
@@ -558,6 +562,16 @@ impl ExecutionEngine {
                     resource_usage: None,
                 });
             } else if let Some(parameters) = parsed_json.get("parameters") {
+                // Validate agent has access to this tool
+                if !agent_config.tools.contains(&tool_name.to_string()) {
+                    return Err(AriaError::new(
+                        ErrorCode::ToolNotFound,
+                        ErrorCategory::Tool,
+                        ErrorSeverity::High,
+                        &format!("Agent '{}' is not authorized to use tool '{}'", agent_config.name, tool_name)
+                    ));
+                }
+                
                 // Execute the specified tool
                 let tool_result = self.tool_registry.execute_tool(tool_name, parameters.clone().into()).await?;
                 

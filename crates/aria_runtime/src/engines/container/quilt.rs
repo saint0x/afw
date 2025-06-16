@@ -11,9 +11,10 @@ pub mod quilt_proto {
 
 use quilt_proto::quilt_service_client::QuiltServiceClient;
 use quilt_proto::{
-    CreateContainerRequest, ExecContainerRequest, GetContainerLogsRequest,
+    CreateContainerRequest, StartContainerRequest, ExecContainerRequest, GetContainerLogsRequest,
     GetContainerStatusRequest, RemoveContainerRequest, StopContainerRequest,
-    LogEntry,
+    LogEntry, ListContainersRequest, GetSystemMetricsRequest, GetNetworkTopologyRequest,
+    GetContainerNetworkInfoRequest,
 };
 
 /// A client for interacting with the `quiltd` container management daemon.
@@ -32,7 +33,7 @@ impl QuiltService {
         Ok(Self { client })
     }
 
-    /// Creates a new container.
+    /// Creates a new container (agent must explicitly start it).
     pub async fn create_container(
         &mut self,
         image_path: String,
@@ -43,6 +44,7 @@ impl QuiltService {
             image_path,
             command,
             environment: env,
+            auto_start: false, // Agent must explicitly start
             ..Default::default()
         };
 
@@ -57,6 +59,24 @@ impl QuiltService {
                 ErrorCategory::Container,
                 ErrorSeverity::High,
                 &format!("Failed to create container: {}", res.error_message),
+            ))
+        }
+    }
+
+    /// Starts a created container.
+    pub async fn start_container(&mut self, container_id: String) -> AriaResult<()> {
+        let request = StartContainerRequest { container_id };
+        let response = self.client.start_container(request).await.map_err(to_aria_error)?;
+        let res = response.into_inner();
+
+        if res.success {
+            Ok(())
+        } else {
+            Err(AriaError::new(
+                ErrorCode::ContainerOperationFailed,
+                ErrorCategory::Container,
+                ErrorSeverity::High,
+                &format!("Failed to start container: {}", res.error_message),
             ))
         }
     }
@@ -146,6 +166,7 @@ impl QuiltService {
             quilt_proto::ContainerStatus::Running => ContainerState::Running,
             quilt_proto::ContainerStatus::Exited => ContainerState::Exited,
             quilt_proto::ContainerStatus::Failed => ContainerState::Failed,
+            quilt_proto::ContainerStatus::Unspecified => ContainerState::Failed,
         };
 
         Ok(ContainerStatus {
@@ -170,6 +191,32 @@ impl QuiltService {
         let response = self.client.get_container_logs(request).await.map_err(to_aria_error)?;
         let logs: Vec<String> = response.into_inner().logs.into_iter().map(|log: LogEntry| log.message).collect();
         Ok(logs.join("\n"))
+    }
+
+    pub async fn list_containers(&mut self) -> AriaResult<Vec<quilt_proto::ContainerInfo>> {
+        let request = ListContainersRequest {
+            state_filter: quilt_proto::ContainerStatus::Unspecified.into(),
+        };
+        let response = self.client.list_containers(request).await.map_err(to_aria_error)?;
+        Ok(response.into_inner().containers)
+    }
+
+    pub async fn get_system_metrics(&mut self) -> AriaResult<quilt_proto::GetSystemMetricsResponse> {
+        let request = GetSystemMetricsRequest {};
+        let response = self.client.get_system_metrics(request).await.map_err(to_aria_error)?;
+        Ok(response.into_inner())
+    }
+
+    pub async fn get_network_topology(&mut self) -> AriaResult<Vec<quilt_proto::NetworkNode>> {
+        let request = GetNetworkTopologyRequest {};
+        let response = self.client.get_network_topology(request).await.map_err(to_aria_error)?;
+        Ok(response.into_inner().nodes)
+    }
+
+    pub async fn get_container_network_info(&mut self, container_id: String) -> AriaResult<quilt_proto::GetContainerNetworkInfoResponse> {
+        let request = GetContainerNetworkInfoRequest { container_id };
+        let response = self.client.get_container_network_info(request).await.map_err(to_aria_error)?;
+        Ok(response.into_inner())
     }
 }
 

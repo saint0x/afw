@@ -35,6 +35,7 @@ pub mod types;
 
 use std::sync::Arc;
 use futures::future::BoxFuture;
+use tokio::sync::Mutex;
 
 pub use errors::{AriaError, AriaResult};
 pub use types::{RuntimeConfiguration, RuntimeResult, ContainerSpec, ToolResult, RuntimeContext};
@@ -54,6 +55,7 @@ use crate::engines::{
     container::quilt::QuiltService,
     config::QuiltConfig,
     ExecutionEngineInterface,
+    LLMHandlerWrapper,
 };
 
 /// Runtime version
@@ -83,36 +85,44 @@ pub async fn create_aria_runtime(_config: RuntimeConfiguration) -> AriaResult<Ar
 
 impl AriaEngines {
     pub async fn new() -> Self {
+        // 1. Core services that everything else depends on
         let llm_handler = LLMHandler::get_instance();
-        let tool_registry = ToolRegistry::new(Arc::clone(&llm_handler));
-        let system_prompt = SystemPromptService::new();
         let quilt_config = QuiltConfig {
             endpoint: "http://127.0.0.1:50051".to_string(),
         };
-        let quilt_service = QuiltService::new(&quilt_config).await.expect("Failed to connect to Quilt daemon");
+        let quilt_service = Arc::new(Mutex::new(
+            QuiltService::new(&quilt_config)
+                .await
+                .expect("Failed to connect to Quilt daemon"),
+        ));
+        let system_prompt = Arc::new(SystemPromptService::new());
 
-        let execution = ExecutionEngine::new(
-            Arc::new(tool_registry.clone()) as Arc<dyn ToolRegistryInterface>,
-            Arc::clone(&llm_handler),
+        // 2. Tool Registry, which depends on core services
+        let tool_registry = Arc::new(ToolRegistry::new(
+            llm_handler.clone(),
             quilt_service.clone(),
-        );
-        
-        let planning = PlanningEngine::new(
-            Arc::new(tool_registry.clone()) as Arc<dyn ToolRegistryInterface>
-        );
-        
-        let conversation = ConversationEngine::new(
-            Some(Box::new(crate::engines::LLMHandlerWrapper::new(Arc::clone(&llm_handler))))
-        );
-        
-        let reflection = ReflectionEngine::new(
-            Arc::new(tool_registry.clone()) as Arc<dyn ToolRegistryInterface>
-        );
-        
-        let context_manager = ContextManagerEngine::new(
-            crate::types::AgentConfig::default()
-        );
+        ).await);
 
+        // 3. Other engines, which depend on tool registry and core services
+        let execution = Arc::new(ExecutionEngine::new(
+            tool_registry.clone(),
+            llm_handler.clone(),
+            quilt_service.clone(),
+        ));
+
+        let planning = Arc::new(PlanningEngine::new(tool_registry.clone()));
+
+        let conversation = Arc::new(ConversationEngine::new(Some(Box::new(
+            LLMHandlerWrapper::new(llm_handler.clone()),
+        ))));
+
+        let reflection = Arc::new(ReflectionEngine::new(tool_registry.clone()));
+
+        let context_manager = Arc::new(ContextManagerEngine::new(
+            crate::types::AgentConfig::default(),
+        ));
+
+        // 4. Assemble the final struct
         Self {
             execution,
             planning,

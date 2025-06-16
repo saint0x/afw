@@ -6,6 +6,8 @@ package quilt;
 service QuiltService {
     // Creates a new container with advanced features
     rpc CreateContainer (CreateContainerRequest) returns (CreateContainerResponse);
+    // Starts a created container
+    rpc StartContainer (StartContainerRequest) returns (StartContainerResponse);
     // Gets the status of a container
     rpc GetContainerStatus (GetContainerStatusRequest) returns (GetContainerStatusResponse);
     // Gets the logs of a container
@@ -16,14 +18,23 @@ service QuiltService {
     rpc RemoveContainer (RemoveContainerRequest) returns (RemoveContainerResponse);
     // Executes a command in a running container
     rpc ExecContainer (ExecContainerRequest) returns (ExecContainerResponse);
+    // Lists all active containers
+    rpc ListContainers (ListContainersRequest) returns (ListContainersResponse);
+    // Gets system-level metrics from the host
+    rpc GetSystemMetrics (GetSystemMetricsRequest) returns (GetSystemMetricsResponse);
+    // Gets the network topology of all managed containers
+    rpc GetNetworkTopology (GetNetworkTopologyRequest) returns (GetNetworkTopologyResponse);
+    // Gets detailed network information for a specific container
+    rpc GetContainerNetworkInfo (GetContainerNetworkInfoRequest) returns (GetContainerNetworkInfoResponse);
 }
 
 // Container status enumeration
 enum ContainerStatus {
-    PENDING = 0;   // Container created but not started
-    RUNNING = 1;   // Container is actively running
-    EXITED = 2;    // Container finished execution
-    FAILED = 3;    // Container failed to start or execute
+    UNSPECIFIED = 0; // Default value, indicates no filter
+    PENDING = 1;   // Container created but not started
+    RUNNING = 2;   // Container is actively running
+    EXITED = 3;    // Container finished execution
+    FAILED = 4;    // Container failed to start or execute
 }
 
 message CreateContainerRequest {
@@ -46,12 +57,24 @@ message CreateContainerRequest {
     bool enable_uts_namespace = 10;                // Enable UTS namespace isolation (hostname)
     bool enable_ipc_namespace = 11;                // Enable IPC namespace isolation
     bool enable_network_namespace = 12;            // Enable network namespace isolation
+    
+    // Lifecycle control
+    bool auto_start = 13;                          // Whether to automatically start the container (default: false for agent control)
 }
 
 message CreateContainerResponse {
     string container_id = 1;                       // Generated container ID
     bool success = 2;                              // Whether creation was successful
     string error_message = 3;                      // Error message if creation failed
+}
+
+message StartContainerRequest {
+    string container_id = 1;                       // Container ID to start
+}
+
+message StartContainerResponse {
+    bool success = 1;                              // Whether start was successful
+    string error_message = 2;                      // Error message if start failed
 }
 
 message GetContainerStatusRequest {
@@ -118,4 +141,58 @@ message ExecContainerResponse {
     string stdout = 3;                            // Standard output (if capture_output=true)
     string stderr = 4;                            // Standard error (if capture_output=true)
     string error_message = 5;                     // Error message if execution failed
+}
+
+message ListContainersRequest {
+    // Optional filter by container state
+    ContainerStatus state_filter = 1;
+}
+
+message ContainerInfo {
+    string container_id = 1;
+    ContainerStatus status = 2;
+    string image_path = 3;
+    string command = 4;
+    uint64 created_at = 5;
+}
+
+message ListContainersResponse {
+    repeated ContainerInfo containers = 1;
+}
+
+message GetSystemMetricsRequest {}
+
+message GetSystemMetricsResponse {
+    uint64 total_memory_bytes = 1;
+    uint64 used_memory_bytes = 2;
+    uint64 total_swap_bytes = 3;
+    uint64 used_swap_bytes = 4;
+    double cpu_usage_percent = 5;
+    uint32 active_containers = 6;
+}
+
+message GetNetworkTopologyRequest {}
+
+message NetworkNode {
+    string container_id = 1;
+    string ip_address = 2;
+    repeated string connections = 3; // List of container IDs this node is connected to
+}
+
+message GetNetworkTopologyResponse {
+    repeated NetworkNode nodes = 1;
+}
+
+message GetContainerNetworkInfoRequest {
+    string container_id = 1;
+}
+
+message GetContainerNetworkInfoResponse {
+    string container_id = 1;
+    string ip_address = 2;
+    string bridge_interface = 3;
+    string veth_host = 4;
+    string veth_container = 5;
+    bool setup_completed = 6;
+    string status = 7;
 } 

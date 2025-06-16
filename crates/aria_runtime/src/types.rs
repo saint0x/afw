@@ -1013,4 +1013,87 @@ impl Default for AgentConfig {
     }
 }
 
+impl AgentConfig {
+    /// Create an agent with access to all primitive container tools (for trusted agents)
+    pub fn with_primitive_tools(name: &str, description: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            system_prompt: Some(format!(
+                "You are {}, a trusted agent with full container orchestration capabilities. \
+                You have access to primitive container tools that give you complete control over container lifecycles. \
+                Use these tools to: create containers, start/stop them, execute commands, manage networks, and clean up resources. \
+                Always follow the pattern: createContainer → startContainer → execInContainer → stopContainer → removeContainer. \
+                You are responsible for managing container lifecycles efficiently.",
+                description
+            )),
+            tools: vec![
+                // Core lifecycle tools
+                "createContainer".to_string(),
+                "startContainer".to_string(),
+                "execInContainer".to_string(),
+                "stopContainer".to_string(),
+                "removeContainer".to_string(),
+                // Monitoring tools
+                "listContainers".to_string(),
+                "getContainerStatus".to_string(),
+                "getContainerLogs".to_string(),
+                "getSystemMetrics".to_string(),
+                // Network tools
+                "getNetworkTopology".to_string(),
+                "getContainerNetworkInfo".to_string(),
+            ],
+            ..Default::default()
+        }
+    }
+    
+    /// Create an agent with access to cognitive tools only (for general use)
+    pub fn with_cognitive_tools(name: &str, description: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            system_prompt: Some(format!(
+                "You are {}, an agent with access to cognitive and analysis tools. \
+                These tools provide LLM-powered capabilities for reasoning, research, and content analysis. \
+                For file operations or container management, use primitive container tools directly.",
+                description
+            )),
+            tools: vec![
+                "readFileTool".to_string(),
+                "parseDocumentTool".to_string(),
+                "writeCodeTool".to_string(),
+                "webSearchTool".to_string(),
+                "ponderTool".to_string(),
+                "createPlanTool".to_string(),
+                "calculator".to_string(),
+                "text_analyzer".to_string(),
+                "data_formatter".to_string(),
+            ],
+            ..Default::default()
+        }
+    }
+    
+    /// Create an agent with mixed access (primitives + cognitive tools for power users)
+    pub fn with_full_access(name: &str, description: &str) -> Self {
+        let mut config = Self::with_primitive_tools(name, description);
+        config.tools.extend(vec![
+            "readFileTool".to_string(),
+            "parseDocumentTool".to_string(),
+            "writeCodeTool".to_string(),
+            "webSearchTool".to_string(),
+            "ponderTool".to_string(),
+            "createPlanTool".to_string(),
+            "calculator".to_string(),
+            "text_analyzer".to_string(),
+            "data_formatter".to_string(),
+        ]);
+        config.system_prompt = Some(format!(
+            "You are {}, a power-user agent with access to both primitive container tools and cognitive analysis tools. \
+            Use primitive container tools for all file operations, container management, and system interactions. \
+            Use cognitive tools for reasoning, research, analysis, and content generation. \
+            You have complete control over container lifecycles and can build complex multi-container workflows.",
+            description
+        ));
+        config
+    }
+}
+
  

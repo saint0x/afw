@@ -22,13 +22,17 @@ pub mod quilt {
 use quilt::quilt_service_server::{QuiltService, QuiltServiceServer};
 use quilt::{
     CreateContainerRequest, CreateContainerResponse,
+    StartContainerRequest, StartContainerResponse,
     GetContainerStatusRequest, GetContainerStatusResponse,
     GetContainerLogsRequest, GetContainerLogsResponse,
     StopContainerRequest, StopContainerResponse,
     RemoveContainerRequest, RemoveContainerResponse,
     ExecContainerRequest, ExecContainerResponse,
-    ContainerStatus,
+    ContainerStatus, ListContainersRequest, ListContainersResponse, ContainerInfo,
+    GetSystemMetricsRequest, GetSystemMetricsResponse, GetNetworkTopologyRequest, GetNetworkTopologyResponse, NetworkNode,
+    GetContainerNetworkInfoRequest, GetContainerNetworkInfoResponse,
 };
+use sysinfo::{System, SystemExt};
 
 #[derive(Clone)]
 pub struct QuiltServiceImpl {
@@ -96,15 +100,21 @@ impl QuiltService for QuiltServiceImpl {
                 // ✅ INSTANT RETURN: Container creation is coordinated but non-blocking
                 ConsoleLogger::success(&format!("Container {} created with network config", container_id));
                 
-                // Start the actual container process in background
-                let sync_engine = self.sync_engine.clone();
-                let container_id_clone = container_id.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = start_container_process(&sync_engine, &container_id_clone).await {
-                        ConsoleLogger::error(&format!("Failed to start container process {}: {}", container_id_clone, e));
-                        let _ = sync_engine.update_container_state(&container_id_clone, ContainerState::Error).await;
-                    }
-                });
+                // Only auto-start if requested (default: false for agent control)
+                if req.auto_start {
+                    // Start the actual container process in background
+                    let sync_engine = self.sync_engine.clone();
+                    let container_id_clone = container_id.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = start_container_process(&sync_engine, &container_id_clone).await {
+                            ConsoleLogger::error(&format!("Failed to start container process {}: {}", container_id_clone, e));
+                            let _ = sync_engine.update_container_state(&container_id_clone, ContainerState::Error).await;
+                        }
+                    });
+                    ConsoleLogger::info(&format!("Container {} will auto-start in background", container_id));
+                } else {
+                    ConsoleLogger::info(&format!("Container {} created but not started (agent control)", container_id));
+                }
                 
                 Ok(Response::new(CreateContainerResponse {
                     container_id,
@@ -118,6 +128,71 @@ impl QuiltService for QuiltServiceImpl {
                     container_id: String::new(),
                     success: false,
                     error_message: e.to_string(),
+                }))
+            }
+        }
+    }
+
+    async fn start_container(
+        &self,
+        request: Request<StartContainerRequest>,
+    ) -> Result<Response<StartContainerResponse>, Status> {
+        let req = request.into_inner();
+        ConsoleLogger::info(&format!("🚀 [GRPC] Starting container: {}", req.container_id));
+
+        // Check if container exists and is in correct state
+        match self.sync_engine.get_container_status(&req.container_id).await {
+            Ok(status) => {
+                match status.state {
+                    ContainerState::Created => {
+                        // Container is ready to start
+                        let sync_engine = self.sync_engine.clone();
+                        let container_id = req.container_id.clone();
+                        
+                        // Start container process in background
+                        tokio::spawn(async move {
+                            if let Err(e) = start_container_process(&sync_engine, &container_id).await {
+                                ConsoleLogger::error(&format!("Failed to start container process {}: {}", container_id, e));
+                                let _ = sync_engine.update_container_state(&container_id, ContainerState::Error).await;
+                            }
+                        });
+
+                        ConsoleLogger::success(&format!("Container {} start initiated", req.container_id));
+                        Ok(Response::new(StartContainerResponse {
+                            success: true,
+                            error_message: String::new(),
+                        }))
+                    }
+                    ContainerState::Running => {
+                        ConsoleLogger::warning(&format!("Container {} is already running", req.container_id));
+                        Ok(Response::new(StartContainerResponse {
+                            success: true,
+                            error_message: "Container is already running".to_string(),
+                        }))
+                    }
+                    ContainerState::Starting => {
+                        ConsoleLogger::info(&format!("Container {} is already starting", req.container_id));
+                        Ok(Response::new(StartContainerResponse {
+                            success: true,
+                            error_message: "Container is already starting".to_string(),
+                        }))
+                    }
+                    _ => {
+                        let error_msg = format!("Container {} cannot be started from state: {:?}", req.container_id, status.state);
+                        ConsoleLogger::error(&error_msg);
+                        Ok(Response::new(StartContainerResponse {
+                            success: false,
+                            error_message: error_msg,
+                        }))
+                    }
+                }
+            }
+            Err(_) => {
+                let error_msg = format!("Container {} not found", req.container_id);
+                ConsoleLogger::error(&error_msg);
+                Ok(Response::new(StartContainerResponse {
+                    success: false,
+                    error_message: error_msg,
                 }))
             }
         }
@@ -305,6 +380,123 @@ impl QuiltService for QuiltServiceImpl {
             Err(_) => {
                 Err(Status::not_found(format!("Container {} not found", req.container_id)))
             }
+        }
+    }
+
+    async fn list_containers(
+        &self,
+        request: Request<ListContainersRequest>,
+    ) -> Result<Response<ListContainersResponse>, Status> {
+        let req = request.into_inner();
+
+        let state_filter = match quilt::ContainerStatus::from_i32(req.state_filter) {
+            Some(quilt::ContainerStatus::Unspecified) => None,
+            Some(quilt::ContainerStatus::Pending) => Some(sync::containers::ContainerState::Pending),
+            Some(quilt::ContainerStatus::Running) => Some(sync::containers::ContainerState::Running),
+            Some(quilt::ContainerStatus::Exited) => Some(sync::containers::ContainerState::Exited),
+            Some(quilt::ContainerStatus::Failed) => Some(sync::containers::ContainerState::Error),
+            None => None,
+        };
+
+        match self.sync_engine.list_containers(state_filter).await {
+            Ok(statuses) => {
+                let mut containers = Vec::new();
+                for status in statuses {
+                    // This requires a second query to get image and command.
+                    // This is N+1, but acceptable for now for a low-frequency introspection tool.
+                    let details: (String, String) = match sqlx::query_as("SELECT image_path, command FROM containers WHERE id = ?")
+                        .bind(&status.id)
+                        .fetch_one(self.sync_engine.pool())
+                        .await {
+                            Ok(details) => details,
+                            Err(_) => (String::from("unknown"), String::from("unknown")),
+                        };
+                    
+                    let proto_status = match status.state {
+                        sync::containers::ContainerState::Pending => quilt::ContainerStatus::Pending,
+                        sync::containers::ContainerState::Running => quilt::ContainerStatus::Running,
+                        sync::containers::ContainerState::Exited => quilt::ContainerStatus::Exited,
+                        sync::containers::ContainerState::Error => quilt::ContainerStatus::Failed,
+                        _ => quilt::ContainerStatus::Unspecified,
+                    };
+
+                    containers.push(ContainerInfo {
+                        container_id: status.id,
+                        status: proto_status.into(),
+                        image_path: details.0,
+                        command: details.1,
+                        created_at: status.created_at as u64,
+                    });
+                }
+                Ok(Response::new(ListContainersResponse { containers }))
+            }
+            Err(e) => Err(Status::internal(format!("Failed to list containers: {}", e))),
+        }
+    }
+
+    async fn get_system_metrics(
+        &self,
+        _request: Request<GetSystemMetricsRequest>,
+    ) -> Result<Response<GetSystemMetricsResponse>, Status> {
+        let mut sys = System::new_all();
+        sys.refresh_all();
+
+        let active_containers = match self.sync_engine.list_containers(Some(ContainerState::Running)).await {
+            Ok(containers) => containers.len() as u32,
+            Err(_) => 0, // If query fails, report 0
+        };
+
+        let response = GetSystemMetricsResponse {
+            total_memory_bytes: sys.total_memory(),
+            used_memory_bytes: sys.used_memory(),
+            total_swap_bytes: sys.total_swap(),
+            used_swap_bytes: sys.used_swap(),
+            cpu_usage_percent: sys.global_cpu_info().cpu_usage() as f64,
+            active_containers,
+        };
+
+        Ok(Response::new(response))
+    }
+
+    async fn get_network_topology(
+        &self,
+        _request: Request<GetNetworkTopologyRequest>,
+    ) -> Result<Response<GetNetworkTopologyResponse>, Status> {
+        match self.sync_engine.list_network_allocations().await {
+            Ok(allocations) => {
+                let nodes = allocations
+                    .into_iter()
+                    .map(|alloc| NetworkNode {
+                        container_id: alloc.container_id,
+                        ip_address: alloc.ip_address,
+                        connections: vec![], // Not tracked yet
+                    })
+                    .collect();
+                Ok(Response::new(GetNetworkTopologyResponse { nodes }))
+            }
+            Err(e) => Err(Status::internal(format!("Failed to get network topology: {}", e))),
+        }
+    }
+
+    async fn get_container_network_info(
+        &self,
+        request: Request<GetContainerNetworkInfoRequest>,
+    ) -> Result<Response<GetContainerNetworkInfoResponse>, Status> {
+        let req = request.into_inner();
+        match self.sync_engine.get_network_allocation(&req.container_id).await {
+            Ok(alloc) => {
+                let response = GetContainerNetworkInfoResponse {
+                    container_id: alloc.container_id,
+                    ip_address: alloc.ip_address,
+                    bridge_interface: alloc.bridge_interface.unwrap_or_default(),
+                    veth_host: alloc.veth_host.unwrap_or_default(),
+                    veth_container: alloc.veth_container.unwrap_or_default(),
+                    setup_completed: alloc.setup_completed,
+                    status: alloc.status.to_string(),
+                };
+                Ok(Response::new(response))
+            }
+            Err(e) => Err(Status::not_found(format!("Network info not found for container {}: {}", req.container_id, e))),
         }
     }
 }

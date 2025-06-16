@@ -11,26 +11,14 @@ use crate::tools::standard::{
     read_file_tool_handler,
     parse_document_tool_handler,
     write_code_tool_handler,
-    calculator::CalculatorTool,
-    create_plan::CreatePlanTool,
-    data_formatter::DataFormatterTool,
-    file_writer::FileWriterTool,
-    parse_document::ParseDocumentTool,
-    ponder::PonderTool,
-    read_file::ReadFileTool,
-    text_analyzer::TextAnalyzerTool,
-    web_search::WebSearchTool,
-    write_code::WriteCodeTool,
-    write_file::WriteFileTool,
-    container_execution::ContainerExecutionTool,
 };
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use crate::engines::Engine;
-use crate::engines::execution::ExecutionEngine;
+use crate::engines::container::quilt::QuiltService;
+use tokio::sync::Mutex;
 
 #[async_trait]
 pub trait ToolRegistryInterface: Send + Sync {
@@ -38,6 +26,9 @@ pub trait ToolRegistryInterface: Send + Sync {
     async fn get_tool_info(&self, name: &str) -> AriaResult<Option<types::RegistryEntry>>;
     async fn list_available_tools(&self) -> AriaResult<Vec<String>>;
     async fn is_tool_available(&self, tool_name: &str) -> bool;
+    async fn list_primitive_tools(&self) -> AriaResult<Vec<String>>;
+    async fn list_abstract_tools(&self) -> AriaResult<Vec<String>>;
+    async fn list_tools_by_security_level(&self, level: SecurityLevel) -> AriaResult<Vec<String>>;
 }
 
 #[async_trait]
@@ -63,13 +54,22 @@ pub struct ToolManifest {
     pub security_level: SecurityLevel,
 }
 
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum ToolScope {
+    /// A high-level tool representing an intent (e.g., `writeFile`).
+    /// The ExecutionEngine will "realize" this into a sequence of primitive tool calls.
+    Abstract,
+    /// A low-level tool that directly controls a system resource (e.g., `createContainer`).
+    Primitive,
+}
+
 #[derive(Clone)]
 pub struct ToolRegistry {
     tools: Arc<RwLock<HashMap<String, RegistryEntry>>>,
     execution_stats: Arc<RwLock<HashMap<String, ToolExecutionStats>>>,
     bundle_store: Option<Arc<dyn BundleStoreInterface>>,
     llm_handler: Arc<LLMHandler>,
-    execution_engine: Arc<dyn ExecutionEngine>,
+    quilt_service: Arc<Mutex<QuiltService>>,
 }
 
 #[derive(Debug, Clone)]
@@ -78,6 +78,7 @@ pub struct RegistryEntry {
     pub description: String,
     pub parameters: Value,
     pub tool_type: ToolType,
+    pub scope: ToolScope,
     pub bundle_id: Option<String>,
     pub version: String,
     pub capabilities: Vec<String>,
@@ -111,7 +112,7 @@ pub struct ToolExecutionStats {
     pub error_rate: f64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SecurityLevel {
     Safe,
     Limited,
@@ -120,47 +121,69 @@ pub enum SecurityLevel {
 }
 
 impl ToolRegistry {
-    pub fn new(
+    pub async fn new(
         llm_handler: Arc<LLMHandler>,
-        execution_engine: Arc<dyn ExecutionEngine>,
+        quilt_service: Arc<Mutex<QuiltService>>,
     ) -> Self {
         let registry = Self {
             tools: Arc::new(RwLock::new(HashMap::new())),
             execution_stats: Arc::new(RwLock::new(HashMap::new())),
             bundle_store: None,
             llm_handler,
-            execution_engine,
+            quilt_service,
         };
-        let tools_arc = registry.tools.clone();
-        let llm_arc = registry.llm_handler.clone();
-        tokio::spawn(async move {
-            let builtin_tools = vec![
-                Self::create_ponder_tool_static(),
-                Self::create_create_plan_tool_static(),
-                Self::create_web_search_tool_static(),
-                Self::create_write_file_tool_static(),
-                Self::create_read_file_tool_static(),
-                Self::create_parse_document_tool_static(),
-                Self::create_write_code_tool_static(),
-                Self::create_calculator_tool_static(),
-                Self::create_text_analyzer_tool_static(),
-                Self::create_file_writer_tool_static(),
-                Self::create_data_formatter_tool_static(),
-            ];
-            let mut tools = tools_arc.write().await;
-            for tool in builtin_tools {
-                println!("🔧 Registering builtin tool: {}", tool.name);
-                tools.insert(tool.name.clone(), tool);
-            }
-            println!("✅ Registered {} builtin tools", tools.len());
-        });
-        self.register_tool(Arc::new(ParseDocumentTool::new(self.llm_handler.clone()))).await;
-        self.register_tool(Arc::new(WriteCodeTool::new(self.llm_handler.clone()))).await;
-        self.register_tool(Arc::new(ContainerExecutionTool::new(self.execution_engine.clone()))).await;
+        
+        registry.register_builtin_tools().await;
+        registry.register_container_tools().await;
 
-        // From the old tools
-        self.register_tool(Arc::new(CalculatorTool {})).await;
         registry
+    }
+
+    async fn register_builtin_tools(&self) {
+        // Builtin tools are deprecated in favor of agent sovereignty
+        // Agents should use primitive tools directly or LLM tools for cognitive tasks
+        let cognitive_tools = vec![
+            Self::create_ponder_tool_static(),
+            Self::create_create_plan_tool_static(),
+            Self::create_web_search_tool_static(),
+            Self::create_read_file_tool_static(),
+            Self::create_parse_document_tool_static(),
+            Self::create_write_code_tool_static(),
+            Self::create_calculator_tool_static(),
+            Self::create_text_analyzer_tool_static(),
+            Self::create_data_formatter_tool_static(),
+        ];
+        let mut tools = self.tools.write().await;
+        let tool_count = cognitive_tools.len();
+        for tool in cognitive_tools {
+            println!("🧠 Registering cognitive tool: {}", tool.name);
+            tools.insert(tool.name.clone(), tool);
+        }
+        println!("✅ Registered {} cognitive tools (builtin container tools deprecated)", tool_count);
+    }
+
+    /// This function will register all the container-primitive tools.
+    /// The tools themselves will be implemented in Phase 2.
+    async fn register_container_tools(&self) {
+        let container_tools = vec![
+            crate::tools::container::create::create_container_tool(),
+            crate::tools::container::start::start_container_tool(),
+            crate::tools::container::exec::exec_in_container_tool(),
+            crate::tools::container::stop::stop_container_tool(),
+            crate::tools::container::remove::remove_container_tool(),
+            crate::tools::container::list::list_containers_tool(),
+            crate::tools::container::status::get_container_status_tool(),
+            crate::tools::container::logs::get_container_logs_tool(),
+            crate::tools::container::metrics::get_system_metrics_tool(),
+            crate::tools::container::network_topology::get_network_topology_tool(),
+            crate::tools::container::network_info::get_container_network_info_tool(),
+        ];
+
+        let mut tools = self.tools.write().await;
+        for tool in container_tools {
+            println!("📦 Registering container tool: {}", tool.name);
+            tools.insert(tool.name.clone(), tool);
+        }
     }
 
     fn create_ponder_tool_static() -> RegistryEntry {
@@ -169,6 +192,7 @@ impl ToolRegistry {
             description: "Analyzes situations, reflects on outcomes, and provides strategic insights".to_string(),
             parameters: serde_json::json!({ "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"] }),
             tool_type: ToolType::LLM { provider: "openai".to_string(), model: "gpt-4".to_string() },
+            scope: ToolScope::Abstract,
             bundle_id: None,
             version: "1.0.0".to_string(),
             capabilities: vec!["reflection".to_string()],
@@ -183,6 +207,7 @@ impl ToolRegistry {
             description: "Creates detailed execution plans for complex multi-step tasks".to_string(),
             parameters: serde_json::json!({ "type": "object", "properties": { "objective": { "type": "string" } }, "required": ["objective"] }),
             tool_type: ToolType::LLM { provider: "openai".to_string(), model: "gpt-4".to_string() },
+            scope: ToolScope::Abstract,
             bundle_id: None,
             version: "1.0.0".to_string(),
             capabilities: vec!["planning".to_string()],
@@ -204,6 +229,7 @@ impl ToolRegistry {
                 "required": ["operation"] 
             }),
             tool_type: ToolType::LLM { provider: "openai".to_string(), model: "gpt-4".to_string() },
+            scope: ToolScope::Abstract,
             bundle_id: None,
             version: "1.0.0".to_string(),
             capabilities: vec!["mathematics".to_string(), "calculation".to_string()],
@@ -225,6 +251,7 @@ impl ToolRegistry {
                 "required": ["text"] 
             }),
             tool_type: ToolType::LLM { provider: "openai".to_string(), model: "gpt-4".to_string() },
+            scope: ToolScope::Abstract,
             bundle_id: None,
             version: "1.0.0".to_string(),
             capabilities: vec!["analysis".to_string(), "text_processing".to_string()],
@@ -233,26 +260,7 @@ impl ToolRegistry {
         }
     }
 
-    fn create_file_writer_tool_static() -> RegistryEntry {
-        RegistryEntry {
-            name: "file_writer".to_string(),
-            description: "Creates and writes content to files with proper formatting and structure".to_string(),
-            parameters: serde_json::json!({ 
-                "type": "object", 
-                "properties": { 
-                    "filename": { "type": "string", "description": "The name of the file to create" },
-                    "content": { "type": "string", "description": "The content to write to the file" }
-                }, 
-                "required": ["filename", "content"] 
-            }),
-            tool_type: ToolType::LLM { provider: "openai".to_string(), model: "gpt-4".to_string() },
-            bundle_id: None,
-            version: "1.0.0".to_string(),
-            capabilities: vec!["file_operations".to_string(), "content_creation".to_string()],
-            resource_requirements: ResourceRequirements::default(),
-            security_level: SecurityLevel::Limited,
-        }
-    }
+    // file_writer removed - agents should use primitive container tools directly
 
     fn create_data_formatter_tool_static() -> RegistryEntry {
         RegistryEntry {
@@ -267,6 +275,7 @@ impl ToolRegistry {
                 "required": ["data"] 
             }),
             tool_type: ToolType::LLM { provider: "openai".to_string(), model: "gpt-4".to_string() },
+            scope: ToolScope::Abstract,
             bundle_id: None,
             version: "1.0.0".to_string(),
             capabilities: vec!["formatting".to_string(), "data_presentation".to_string()],
@@ -289,6 +298,7 @@ impl ToolRegistry {
                 "required": ["query"] 
             }),
             tool_type: ToolType::LLM { provider: "openai".to_string(), model: "gpt-4".to_string() },
+            scope: ToolScope::Abstract,
             bundle_id: None,
             version: "1.0.0".to_string(),
             capabilities: vec!["web_search".to_string(), "information_retrieval".to_string()],
@@ -297,28 +307,7 @@ impl ToolRegistry {
         }
     }
 
-    fn create_write_file_tool_static() -> RegistryEntry {
-        RegistryEntry {
-            name: "writeFileTool".to_string(),
-            description: "Write content to files with automatic directory creation and metadata extraction".to_string(),
-            parameters: serde_json::json!({ 
-                "type": "object", 
-                "properties": { 
-                    "path": { "type": "string", "description": "File path (legacy)" },
-                    "filePath": { "type": "string", "description": "File path to write to" },
-                    "content": { "type": "string", "description": "Content to write" },
-                    "encoding": { "type": "string", "description": "File encoding (default: utf-8)" }
-                }, 
-                "required": ["content"] 
-            }),
-            tool_type: ToolType::LLM { provider: "openai".to_string(), model: "gpt-4".to_string() },
-            bundle_id: None,
-            version: "1.0.0".to_string(),
-            capabilities: vec!["file_operations".to_string(), "content_creation".to_string()],
-            resource_requirements: ResourceRequirements::default(),
-            security_level: SecurityLevel::Limited,
-        }
-    }
+    // writeFileTool removed - agents should use primitive container tools directly
 
     fn create_read_file_tool_static() -> RegistryEntry {
         RegistryEntry {
@@ -334,6 +323,7 @@ impl ToolRegistry {
                 "required": [] 
             }),
             tool_type: ToolType::LLM { provider: "openai".to_string(), model: "gpt-4".to_string() },
+            scope: ToolScope::Abstract,
             bundle_id: None,
             version: "1.0.0".to_string(),
             capabilities: vec!["file_operations".to_string(), "content_reading".to_string()],
@@ -357,6 +347,7 @@ impl ToolRegistry {
                 "required": [] 
             }),
             tool_type: ToolType::LLM { provider: "openai".to_string(), model: "gpt-4".to_string() },
+            scope: ToolScope::Abstract,
             bundle_id: None,
             version: "1.0.0".to_string(),
             capabilities: vec!["document_analysis".to_string(), "content_extraction".to_string(), "summarization".to_string()],
@@ -384,6 +375,7 @@ impl ToolRegistry {
                 "required": [] 
             }),
             tool_type: ToolType::LLM { provider: "openai".to_string(), model: "gpt-4".to_string() },
+            scope: ToolScope::Abstract,
             bundle_id: None,
             version: "1.0.0".to_string(),
             capabilities: vec!["code_generation".to_string(), "programming".to_string(), "file_operations".to_string()],
@@ -406,6 +398,254 @@ impl ToolRegistryInterface for ToolRegistry {
         })?;
 
         match &tool_entry.tool_type {
+            ToolType::Builtin => {
+                // Builtin tools are deprecated in favor of agent sovereignty
+                // Agents should use primitive tools directly for full control
+                Err(AriaError::new(
+                    ErrorCode::NotSupported,
+                    ErrorCategory::Tool,
+                    ErrorSeverity::Medium,
+                    &format!("Builtin tool '{}' is deprecated. Use primitive container tools for full agent control.", name),
+                ))
+            }
+            ToolType::Container { .. } => {
+                println!("📦 Executing container tool: {}", name);
+                let params_obj = parameters.as_object().ok_or_else(|| AriaError::new(
+                    ErrorCode::ToolInvalidParameters,
+                    ErrorCategory::Tool,
+                    ErrorSeverity::Medium,
+                    "Container tool parameters must be an object",
+                ))?;
+
+                match name {
+                    "createContainer" => {
+                        let image = params_obj.get("image").and_then(|v| v.as_str()).ok_or_else(|| AriaError::new(
+                            ErrorCode::ToolInvalidParameters,
+                            ErrorCategory::Tool,
+                            ErrorSeverity::Medium,
+                            "Missing required parameter 'image' for createContainer",
+                        ))?.to_string();
+
+                        let command = params_obj.get("command").and_then(|v| v.as_array()).map(|arr| {
+                            arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()
+                        }).unwrap_or_default();
+
+                        let env = params_obj.get("env").and_then(|v| v.as_object()).map(|obj| {
+                            obj.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect()
+                        }).unwrap_or_default();
+                        
+                        let mut quilt = self.quilt_service.lock().await;
+                        let container_id = quilt.create_container(image, command, env).await?;
+
+                        Ok(ToolResult {
+                            success: true,
+                            result: Some(serde_json::json!({ "containerId": container_id }).into()),
+                            error: None,
+                            metadata: HashMap::new(),
+                            execution_time_ms: 0,
+                            resource_usage: None,
+                        })
+                    }
+                    "startContainer" => {
+                        let container_id = params_obj.get("containerId").and_then(|v| v.as_str()).ok_or_else(|| AriaError::new(
+                            ErrorCode::ToolInvalidParameters,
+                            ErrorCategory::Tool,
+                            ErrorSeverity::Medium,
+                            "Missing required parameter 'containerId' for startContainer",
+                        ))?.to_string();
+                        
+                        let mut quilt = self.quilt_service.lock().await;
+                        quilt.start_container(container_id.clone()).await?;
+
+                        Ok(ToolResult {
+                            success: true,
+                            result: Some(serde_json::json!({ "containerId": container_id, "status": "starting" }).into()),
+                            error: None,
+                            metadata: HashMap::new(),
+                            execution_time_ms: 0,
+                            resource_usage: None,
+                        })
+                    }
+                    "execInContainer" => {
+                        let container_id = params_obj.get("containerId").and_then(|v| v.as_str()).ok_or_else(|| AriaError::new(
+                            ErrorCode::ToolInvalidParameters,
+                            ErrorCategory::Tool,
+                            ErrorSeverity::Medium,
+                            "Missing required parameter 'containerId' for execInContainer",
+                        ))?.to_string();
+
+                        let command = params_obj.get("command").and_then(|v| v.as_array()).map(|arr| {
+                            arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()
+                        }).ok_or_else(|| AriaError::new(
+                            ErrorCode::ToolInvalidParameters,
+                            ErrorCategory::Tool,
+                            ErrorSeverity::Medium,
+                            "Missing required parameter 'command' for execInContainer",
+                        ))?;
+                        
+                        let mut quilt = self.quilt_service.lock().await;
+                        let exec_result = quilt.exec_in_container(container_id, command).await?;
+
+                        Ok(ToolResult {
+                            success: exec_result.exit_code == 0,
+                            result: Some(serde_json::json!({
+                                "exitCode": exec_result.exit_code,
+                                "stdout": exec_result.stdout,
+                                "stderr": exec_result.stderr,
+                            }).into()),
+                            error: if exec_result.exit_code == 0 { None } else { Some(exec_result.stderr) },
+                            metadata: HashMap::new(),
+                            execution_time_ms: exec_result.execution_time_ms,
+                            resource_usage: exec_result.resource_usage,
+                        })
+                    }
+                    "stopContainer" => {
+                        let container_id = params_obj.get("containerId").and_then(|v| v.as_str()).ok_or_else(|| AriaError::new(
+                            ErrorCode::ToolInvalidParameters,
+                            ErrorCategory::Tool,
+                            ErrorSeverity::Medium,
+                            "Missing required parameter 'containerId' for stopContainer",
+                        ))?.to_string();
+                        
+                        let mut quilt = self.quilt_service.lock().await;
+                        quilt.stop_container(container_id).await?;
+
+                        Ok(ToolResult {
+                            success: true,
+                            result: Some(serde_json::json!({ "status": "stopped" }).into()),
+                            error: None,
+                            metadata: HashMap::new(),
+                            execution_time_ms: 0,
+                            resource_usage: None,
+                        })
+                    }
+                    "removeContainer" => {
+                        let container_id = params_obj.get("containerId").and_then(|v| v.as_str()).ok_or_else(|| AriaError::new(
+                            ErrorCode::ToolInvalidParameters,
+                            ErrorCategory::Tool,
+                            ErrorSeverity::Medium,
+                            "Missing required parameter 'containerId' for removeContainer",
+                        ))?.to_string();
+                        
+                        let mut quilt = self.quilt_service.lock().await;
+                        quilt.remove_container(container_id).await?;
+
+                        Ok(ToolResult {
+                            success: true,
+                            result: Some(serde_json::json!({ "status": "removed" }).into()),
+                            error: None,
+                            metadata: HashMap::new(),
+                            execution_time_ms: 0,
+                            resource_usage: None,
+                        })
+                    }
+                    "listContainers" => {
+                        let mut quilt = self.quilt_service.lock().await;
+                        let containers = quilt.list_containers().await?;
+
+                        Ok(ToolResult {
+                            success: true,
+                            result: Some(serde_json::to_value(containers).unwrap_or_default().into()),
+                            error: None,
+                            metadata: HashMap::new(),
+                            execution_time_ms: 0,
+                            resource_usage: None,
+                        })
+                    }
+                    "getContainerStatus" => {
+                        let container_id = params_obj.get("containerId").and_then(|v| v.as_str()).ok_or_else(|| AriaError::new(
+                            ErrorCode::ToolInvalidParameters,
+                            ErrorCategory::Tool,
+                            ErrorSeverity::Medium,
+                            "Missing required parameter 'containerId' for getContainerStatus",
+                        ))?.to_string();
+                        
+                        let mut quilt = self.quilt_service.lock().await;
+                        let status = quilt.get_container_status(container_id).await?;
+
+                        Ok(ToolResult {
+                            success: true,
+                            result: Some(serde_json::to_value(status).unwrap_or_default().into()),
+                            error: None,
+                            metadata: HashMap::new(),
+                            execution_time_ms: 0,
+                            resource_usage: None,
+                        })
+                    }
+                    "getContainerLogs" => {
+                        let container_id = params_obj.get("containerId").and_then(|v| v.as_str()).ok_or_else(|| AriaError::new(
+                            ErrorCode::ToolInvalidParameters,
+                            ErrorCategory::Tool,
+                            ErrorSeverity::Medium,
+                            "Missing required parameter 'containerId' for getContainerLogs",
+                        ))?.to_string();
+                        
+                        let mut quilt = self.quilt_service.lock().await;
+                        let logs = quilt.get_container_logs(container_id).await?;
+
+                        Ok(ToolResult {
+                            success: true,
+                            result: Some(serde_json::json!({ "logs": logs }).into()),
+                            error: None,
+                            metadata: HashMap::new(),
+                            execution_time_ms: 0,
+                            resource_usage: None,
+                        })
+                    }
+                    "getSystemMetrics" => {
+                        let mut quilt = self.quilt_service.lock().await;
+                        let metrics = quilt.get_system_metrics().await?;
+
+                        Ok(ToolResult {
+                            success: true,
+                            result: Some(serde_json::to_value(metrics).unwrap_or_default().into()),
+                            error: None,
+                            metadata: HashMap::new(),
+                            execution_time_ms: 0,
+                            resource_usage: None,
+                        })
+                    }
+                    "getNetworkTopology" => {
+                        let mut quilt = self.quilt_service.lock().await;
+                        let topology = quilt.get_network_topology().await?;
+
+                        Ok(ToolResult {
+                            success: true,
+                            result: Some(serde_json::to_value(topology).unwrap_or_default().into()),
+                            error: None,
+                            metadata: HashMap::new(),
+                            execution_time_ms: 0,
+                            resource_usage: None,
+                        })
+                    }
+                    "getContainerNetworkInfo" => {
+                        let container_id = params_obj.get("containerId").and_then(|v| v.as_str()).ok_or_else(|| AriaError::new(
+                            ErrorCode::ToolInvalidParameters,
+                            ErrorCategory::Tool,
+                            ErrorSeverity::Medium,
+                            "Missing required parameter 'containerId' for getContainerNetworkInfo",
+                        ))?.to_string();
+
+                        let mut quilt = self.quilt_service.lock().await;
+                        let info = quilt.get_container_network_info(container_id).await?;
+
+                        Ok(ToolResult {
+                            success: true,
+                            result: Some(serde_json::to_value(info).unwrap_or_default().into()),
+                            error: None,
+                            metadata: HashMap::new(),
+                            execution_time_ms: 0,
+                            resource_usage: None,
+                        })
+                    }
+                    _ => Err(AriaError::new(
+                        ErrorCode::NotSupported,
+                        ErrorCategory::Tool,
+                        ErrorSeverity::Medium,
+                        &format!("Unsupported container tool: {}", name),
+                    )),
+                }
+            }
             ToolType::LLM { provider, model } => {
                 // Use specialized tool implementations for planning and cognitive tools
                 match name {
@@ -522,5 +762,38 @@ impl ToolRegistryInterface for ToolRegistry {
 
     async fn is_tool_available(&self, tool_name: &str) -> bool {
         self.tools.read().await.contains_key(tool_name)
+    }
+    
+    /// Get all primitive tools (for agent empowerment)
+    async fn list_primitive_tools(&self) -> AriaResult<Vec<String>> {
+        let tools = self.tools.read().await;
+        let primitive_tools: Vec<String> = tools
+            .iter()
+            .filter(|(_, entry)| entry.scope == ToolScope::Primitive)
+            .map(|(name, _)| name.clone())
+            .collect();
+        Ok(primitive_tools)
+    }
+    
+    /// Get all abstract tools (for convenience layer)
+    async fn list_abstract_tools(&self) -> AriaResult<Vec<String>> {
+        let tools = self.tools.read().await;
+        let abstract_tools: Vec<String> = tools
+            .iter()
+            .filter(|(_, entry)| entry.scope == ToolScope::Abstract)
+            .map(|(name, _)| name.clone())
+            .collect();
+        Ok(abstract_tools)
+    }
+    
+    /// Get tools by security level (for access control)
+    async fn list_tools_by_security_level(&self, level: SecurityLevel) -> AriaResult<Vec<String>> {
+        let tools = self.tools.read().await;
+        let filtered_tools: Vec<String> = tools
+            .iter()
+            .filter(|(_, entry)| entry.security_level == level)
+            .map(|(name, _)| name.clone())
+            .collect();
+        Ok(filtered_tools)
     }
 } 
