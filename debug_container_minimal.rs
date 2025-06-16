@@ -88,7 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Test 3: Check if sleep binary exists via exec
     println!("\n=== TEST 3: CHECK SLEEP BINARY ===");
     let output = Command::new("./target/debug/cli")
-        .args(&["exec", &container_id, "/bin/ls", "-la", "/bin/sleep"])
+        .args(&["icc", "exec", &container_id, "--", "/bin/ls", "-la", "/bin/sleep"])
         .output()?;
     
     println!("Sleep binary check:");
@@ -99,7 +99,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Test 4: Check what's actually in /bin
     println!("\n=== TEST 4: LIST /bin CONTENTS ===");
     let output = Command::new("./target/debug/cli")
-        .args(&["exec", &container_id, "/bin/ls", "-la", "/bin/"])
+        .args(&["icc", "exec", &container_id, "--", "/bin/ls", "-la", "/bin/"])
         .output()?;
     
     println!("Bin directory contents:");
@@ -109,7 +109,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Test 5: Try sleep command directly
     println!("\n=== TEST 5: TRY SLEEP DIRECTLY ===");
     let output = Command::new("./target/debug/cli")
-        .args(&["exec", &container_id, "/bin/sleep", "1"])
+        .args(&["icc", "exec", &container_id, "--", "/bin/sleep", "1"])
         .output()?;
     
     println!("Direct sleep test:");
@@ -120,7 +120,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Test 6: Try with shell wrapper (like the failing case)
     println!("\n=== TEST 6: TRY SHELL WRAPPER ===");
     let output = Command::new("./target/debug/cli")
-        .args(&["exec", &container_id, "/bin/sh", "-c", "/bin/sleep 1"])
+        .args(&["icc", "exec", &container_id, "--", "/bin/sh", "-c", "/bin/sleep 1"])
         .output()?;
     
     println!("Shell wrapper test:");
@@ -131,7 +131,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Test 7: Check PATH inside container
     println!("\n=== TEST 7: CHECK PATH ENVIRONMENT ===");
     let output = Command::new("./target/debug/cli")
-        .args(&["exec", &container_id, "/bin/sh", "-c", "echo PATH=$PATH"])
+        .args(&["icc", "exec", &container_id, "--", "/bin/sh", "-c", "echo PATH=$PATH"])
         .output()?;
     
     println!("PATH check:");
@@ -141,7 +141,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Test 8: Try with which command
     println!("\n=== TEST 8: WHICH SLEEP ===");
     let output = Command::new("./target/debug/cli")
-        .args(&["exec", &container_id, "/bin/sh", "-c", "which sleep || echo 'sleep not in PATH'"])
+        .args(&["icc", "exec", &container_id, "--", "/bin/sh", "-c", "which sleep || echo 'sleep not in PATH'"])
         .output()?;
     
     println!("Which sleep:");

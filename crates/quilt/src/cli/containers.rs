@@ -218,7 +218,7 @@ pub async fn handle_container_command(
                 enable_uts_namespace: uts_ns,
                 enable_ipc_namespace: ipc_ns,
                 enable_network_namespace: net_ns,
-                auto_start: false,
+                auto_start: true,  // CLI should auto-start containers
             });
 
             match client.create_container(request).await {
@@ -442,7 +442,7 @@ pub async fn handle_container_command(
                 enable_mount_namespace: true,
                 enable_uts_namespace: true,
                 enable_ipc_namespace: true,
-                auto_start: false,
+                auto_start: true,  // Production containers should auto-start
             };
 
             match client.create_container(tonic::Request::new(create_request)).await {
