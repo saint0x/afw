@@ -101,3 +101,15 @@ path = "script4.rs"
 [[bin]]
 name = "conversational-container-test"
 path = "script5.rs"
+
+[[bin]]
+name = "nested-container-test"
+path = "script6.rs"
+
+[[bin]]
+name = "agent-container-test"
+path = "script7.rs"
+
+[[bin]]
+name = "debug-container"
+path = "debug_container.rs"

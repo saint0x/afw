@@ -293,17 +293,40 @@ impl ContainerRuntime {
                 let sleep_duration = &command_clone[1];
                 // Validate sleep duration
                 if sleep_duration.parse::<u64>().is_ok() || sleep_duration == "infinity" {
-                    ("/bin/sh".to_string(), vec!["-c".to_string(), format!("exec sleep {}", sleep_duration)])
+                    ("/bin/sh".to_string(), vec!["-c".to_string(), format!("exec /bin/sleep {}", sleep_duration)])
                 } else {
                     ConsoleLogger::warning(&format!("Invalid sleep duration: {}, using default", sleep_duration));
-                    ("/bin/sh".to_string(), vec!["-c".to_string(), "exec sleep 3600".to_string()])
+                    ("/bin/sh".to_string(), vec!["-c".to_string(), "exec /bin/sleep 3600".to_string()])
                 }
             } else if command_clone.len() == 1 {
-                // Single command - execute it through shell
-                ("/bin/sh".to_string(), vec!["-c".to_string(), format!("exec {}", command_clone[0])])
+                // Single command - execute it through shell with full path if it's a known command
+                let cmd = &command_clone[0];
+                let full_path_cmd = if cmd == "echo" || cmd == "cat" || cmd == "ls" || cmd == "sleep" {
+                    format!("/bin/{}", cmd)
+                } else if cmd.starts_with("/") {
+                    cmd.clone() // Already full path
+                } else {
+                    cmd.clone() // Hope it's in PATH
+                };
+                ("/bin/sh".to_string(), vec!["-c".to_string(), format!("exec {}", full_path_cmd)])
             } else {
-                // Multiple arguments - join them and execute through shell with exec
-                ("/bin/sh".to_string(), vec!["-c".to_string(), format!("exec {}", command_clone.join(" "))])
+                // Multiple arguments - for known commands use full paths
+                let mut full_cmd_parts = Vec::new();
+                for (i, part) in command_clone.iter().enumerate() {
+                    if i == 0 {
+                        // First part is the command
+                        if part == "echo" || part == "cat" || part == "ls" || part == "sleep" {
+                            full_cmd_parts.push(format!("/bin/{}", part));
+                        } else if part.starts_with("/") {
+                            full_cmd_parts.push(part.clone()); // Already full path
+                        } else {
+                            full_cmd_parts.push(part.clone()); // Hope it's in PATH
+                        }
+                    } else {
+                        full_cmd_parts.push(part.clone()); // Arguments as-is
+                    }
+                }
+                ("/bin/sh".to_string(), vec!["-c".to_string(), format!("exec {}", full_cmd_parts.join(" "))])
             };
 
             // Convert to CString for exec (do this once, outside any fork)
@@ -485,40 +508,14 @@ impl ContainerRuntime {
     fn fix_container_binaries(&self, rootfs_path: &str) -> Result<(), String> {
         ConsoleLogger::debug("Fixing container binaries and symlinks...");
 
-        // Essential binaries that must work
-        let essential_binaries = vec![
-            ("sh", vec!["/bin/sh", "/bin/bash", "/usr/bin/sh"]),
-            ("echo", vec!["/bin/echo", "/usr/bin/echo"]),
-            ("ls", vec!["/bin/ls", "/usr/bin/ls"]),
-            ("cat", vec!["/bin/cat", "/usr/bin/cat"]),
-        ];
-
-        // First, ensure we have essential library directories
-        self.setup_library_directories(rootfs_path)?;
-
-        for (binary_name, host_paths) in essential_binaries {
-            let container_binary_path = format!("{}/bin/{}", rootfs_path, binary_name);
-            
-            // Check if the binary exists and works in the container
-            if FileSystemUtils::is_file(&container_binary_path) {
-                // Check if it's a broken symlink
-                if FileSystemUtils::is_broken_symlink(&container_binary_path) {
-                    ConsoleLogger::warning(&format!("Broken symlink found for {}: {}", binary_name, container_binary_path));
-                        self.fix_broken_binary(&container_binary_path, binary_name, &host_paths)?;
-                } else if !FileSystemUtils::is_executable(&container_binary_path) {
-                    ConsoleLogger::warning(&format!("Binary {} is not executable", binary_name));
-                            self.fix_broken_binary(&container_binary_path, binary_name, &host_paths)?;
-                        } else {
-                    ConsoleLogger::debug(&format!("Binary {} exists and is executable", binary_name));
-                }
-            } else {
-                ConsoleLogger::warning(&format!("Missing binary: {}", binary_name));
-                self.fix_broken_binary(&container_binary_path, binary_name, &host_paths)?;
-            }
+        // All containers use busybox - verify essential symlinks
+        let busybox_path = format!("{}/bin/busybox", rootfs_path);
+        if !FileSystemUtils::is_file(&busybox_path) || !FileSystemUtils::is_executable(&busybox_path) {
+            return Err(format!("Container missing or non-executable busybox at: {}", busybox_path));
         }
 
-        // Copy essential libraries
-        self.copy_essential_libraries(rootfs_path)?;
+        ConsoleLogger::debug("Container has busybox - verifying essential symlinks");
+        self.verify_busybox_symlinks(rootfs_path)?;
 
         // Ensure basic shell works
         self.verify_container_shell(rootfs_path)?;
@@ -571,536 +568,50 @@ impl ContainerRuntime {
         Ok(())
     }
 
-    /// Fix a broken or missing binary by copying from host
-    fn fix_broken_binary(&self, container_binary_path: &str, binary_name: &str, host_paths: &[&str]) -> Result<(), String> {
-        ConsoleLogger::debug(&format!("Fixing broken binary: {}", binary_name));
+    /// Verify that essential busybox symlinks exist and work properly
+    fn verify_busybox_symlinks(&self, rootfs_path: &str) -> Result<(), String> {
+        let essential_utils = vec!["sh", "echo", "ls", "cat", "sleep"];
+        let busybox_path = format!("{}/bin/busybox", rootfs_path);
 
-        // Remove the broken binary if it exists
-        if FileSystemUtils::is_file(container_binary_path) {
-            FileSystemUtils::remove_path(container_binary_path)?;
+        for util in essential_utils {
+            let util_path = format!("{}/bin/{}", rootfs_path, util);
+            
+            if !FileSystemUtils::is_file(&util_path) {
+                ConsoleLogger::warning(&format!("Missing busybox symlink: {}", util));
+                self.create_busybox_symlink(&util_path, &busybox_path)?;
+            } else if FileSystemUtils::is_broken_symlink(&util_path) {
+                ConsoleLogger::warning(&format!("Broken busybox symlink: {}", util));
+                FileSystemUtils::remove_path(&util_path)?;
+                self.create_busybox_symlink(&util_path, &busybox_path)?;
+            } else {
+                ConsoleLogger::debug(&format!("Busybox utility {} exists and is linked", util));
+            }
         }
 
-        // Try to find a working host binary to copy
-        for host_path in host_paths {
-            if FileSystemUtils::is_file(host_path) && FileSystemUtils::is_executable(host_path) {
-                // Check if the host binary is Nix-linked (avoid problematic dependencies)
-                if CommandExecutor::is_nix_linked_binary(host_path) {
-                    ConsoleLogger::debug(&format!("Skipping Nix-linked binary: {}", host_path));
-                    continue;
-                }
+        ConsoleLogger::success("All essential busybox symlinks verified");
+        Ok(())
+    }
 
-                // Copy the working binary
-                match FileSystemUtils::copy_file(host_path, container_binary_path) {
-                            Ok(_) => {
-                        // Make it executable
-                        FileSystemUtils::make_executable(container_binary_path)?;
-                        ConsoleLogger::success(&format!("Fixed binary {} by copying from {}", binary_name, host_path));
-                                return Ok(());
-                            }
-                            Err(e) => {
-                        ConsoleLogger::warning(&format!("Failed to copy {} from {}: {}", binary_name, host_path, e));
-                                continue;
-                            }
-                        }
-                    }
-                }
-
-        // If no suitable host binary found, create a custom shell
-        if binary_name == "sh" {
-            ConsoleLogger::progress("Creating custom shell binary as fallback");
-            return self.create_robust_shell(container_binary_path);
-        }
-
-        // For other binaries, create simple scripts
-        match binary_name {
-            "echo" => self.create_echo_script(container_binary_path),
-            "ls" => self.create_ls_script(container_binary_path),
-            "cat" => self.create_cat_script(container_binary_path),
-            _ => {
-                ConsoleLogger::warning(&format!("Cannot fix unknown binary: {}", binary_name));
+    /// Create a symlink to busybox for a utility
+    fn create_busybox_symlink(&self, util_path: &str, busybox_path: &str) -> Result<(), String> {
+        // Create symlink to busybox
+        match std::os::unix::fs::symlink("busybox", util_path) {
+            Ok(_) => {
+                let util_name = std::path::Path::new(util_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown");
+                ConsoleLogger::success(&format!("Created busybox symlink: {}", util_name));
                 Ok(())
             }
+            Err(e) => Err(format!("Failed to create symlink {}: {}", util_path, e))
         }
     }
 
-    /// Create a robust shell script that works without external dependencies
-    fn create_robust_shell(&self, shell_path: &str) -> Result<(), String> {
-        ConsoleLogger::debug("Creating robust shell binary");
-        
-        // Check if we're dealing with a Nix-linked shell using CommandExecutor
-        let shell_candidates = vec!["/bin/sh", "/bin/bash"];
-        let mut usable_shell = None;
-        
-        for shell in &shell_candidates {
-            if FileSystemUtils::is_file(shell) && FileSystemUtils::is_executable(shell) {
-                // Use CommandExecutor to check if it's Nix-linked
-                if !CommandExecutor::is_nix_linked_binary(shell) {
-                    usable_shell = Some(*shell);
-                    break;
-                }
-            }
-        }
 
-        if let Some(shell_binary) = usable_shell {
-            // Copy the working shell
-            match FileSystemUtils::copy_file(shell_binary, shell_path) {
-                            Ok(_) => {
-                    FileSystemUtils::make_executable(shell_path)?;
-                    ConsoleLogger::success(&format!("Created shell by copying from {}", shell_binary));
-                                return Ok(());
-                            }
-                            Err(e) => {
-                    ConsoleLogger::warning(&format!("Failed to copy shell from {}: {}", shell_binary, e));
-                }
-            }
-        }
 
-        // Fallback: create a minimal shell binary using C code
-        ConsoleLogger::progress("Creating minimal C shell binary");
-        self.create_minimal_shell_binary(shell_path)
-    }
 
-    /// Copy essential libraries for a shell binary
-    fn copy_shell_dependencies(&self, shell_binary: &str, container_root: &str) -> Result<(), String> {
-        // Use ldd to find dependencies
-        let output = Command::new("ldd")
-            .arg(shell_binary)
-            .output()
-            .map_err(|e| format!("Failed to run ldd: {}", e))?;
 
-        let ldd_output = String::from_utf8_lossy(&output.stdout);
-        
-        for line in ldd_output.lines() {
-            if let Some(lib_path) = self.extract_library_path(line) {
-                if Path::new(&lib_path).exists() {
-                    let lib_name = Path::new(&lib_path).file_name().unwrap().to_str().unwrap();
-                    let container_lib_path = format!("{}/lib/{}", container_root, lib_name);
-                    
-                    if let Some(parent) = Path::new(&container_lib_path).parent() {
-                        fs::create_dir_all(parent).ok();
-                    }
-                    
-                    if fs::copy(&lib_path, &container_lib_path).is_ok() {
-                        println!("    ✓ Copied library: {}", lib_name);
-                    }
-                }
-            }
-        }
-        
-        Ok(())
-    }
-
-    /// Extract library path from ldd output
-    fn extract_library_path(&self, ldd_line: &str) -> Option<String> {
-        // Parse lines like: "libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x...)"
-        if let Some(arrow_pos) = ldd_line.find(" => ") {
-            let after_arrow = &ldd_line[arrow_pos + 4..];
-            if let Some(space_pos) = after_arrow.find(' ') {
-                let path = after_arrow[..space_pos].trim();
-                if path.starts_with('/') && Path::new(path).exists() {
-                    return Some(path.to_string());
-                }
-            }
-        }
-        None
-    }
-
-    /// Create a minimal shell binary that can execute basic commands
-    fn create_minimal_shell_binary(&self, shell_path: &str) -> Result<(), String> {
-        // Create a more complete C program that can handle shell commands
-        let c_program = r#"
-#include <unistd.h>
-#include <sys/wait.h>
-#include <string.h>
-#include <stdlib.h>
-#include <stdio.h>
-
-// Simple built-in command implementations
-int builtin_echo(char *args) {
-    if (args && strlen(args) > 0) {
-        printf("%s\n", args);
-    } else {
-        printf("\n");
-    }
-    return 0;
-}
-
-int builtin_pwd(void) {
-    char cwd[1024];
-    if (getcwd(cwd, sizeof(cwd)) != NULL) {
-        printf("%s\n", cwd);
-        return 0;
-    }
-    return 1;
-}
-
-int main(int argc, char *argv[]) {
-    if (argc >= 3 && strcmp(argv[1], "-c") == 0) {
-        char *command = argv[2];
-        
-        // Handle compound commands internally by splitting on semicolons
-        if (strstr(command, ";")) {
-            // Split command on semicolons and execute each part
-            char cmd_copy[1024];
-            strncpy(cmd_copy, command, sizeof(cmd_copy)-1);
-            cmd_copy[sizeof(cmd_copy)-1] = '\0';
-            
-            char *cmd_part = strtok(cmd_copy, ";");
-            int overall_exit_code = 0;
-            
-            while (cmd_part != NULL) {
-                // Trim leading/trailing whitespace
-                while (*cmd_part == ' ' || *cmd_part == '\t') cmd_part++;
-                char *end = cmd_part + strlen(cmd_part) - 1;
-                while (end > cmd_part && (*end == ' ' || *end == '\t')) {
-                    *end = '\0';
-                    end--;
-                }
-                
-                if (strlen(cmd_part) > 0) {
-                    // Execute this individual command
-                    int exit_code = 0;
-                    
-                    // Handle built-in commands
-                    if (strncmp(cmd_part, "echo ", 5) == 0) {
-                        printf("%s\n", cmd_part + 5);
-                    } else if (strcmp(cmd_part, "echo") == 0) {
-                        printf("\n");
-                    } else if (strcmp(cmd_part, "pwd") == 0) {
-                        char cwd[1024];
-                        if (getcwd(cwd, sizeof(cwd)) != NULL) {
-                            printf("%s\n", cwd);
-                        } else {
-                            exit_code = 1;
-                        }
-                    } else if (strncmp(cmd_part, "echo '", 6) == 0 || strncmp(cmd_part, "echo \"", 6) == 0) {
-                        // Handle quoted echo - strip quotes and print content
-                        char *start = cmd_part + 6;
-                        char *end_quote = strchr(start, cmd_part[5]);
-                        if (end_quote) {
-                            *end_quote = '\0';
-                            printf("%s\n", start);
-                        } else {
-                            printf("%s\n", start);
-                        }
-                    } else {
-                        // For other commands, try to execute directly with fork+exec
-                        pid_t pid = fork();
-                        if (pid == 0) {
-                            // Child process - parse and exec the command
-                            char *args[64];
-                            char single_cmd_copy[256];
-                            int arg_count = 0;
-                            
-                            strncpy(single_cmd_copy, cmd_part, sizeof(single_cmd_copy)-1);
-                            single_cmd_copy[sizeof(single_cmd_copy)-1] = '\0';
-                            
-                            char *token = strtok(single_cmd_copy, " ");
-                            while (token != NULL && arg_count < 63) {
-                                args[arg_count++] = token;
-                                token = strtok(NULL, " ");
-                            }
-                            args[arg_count] = NULL;
-                            
-                            if (arg_count > 0) {
-                                // Try to execute the command directly
-                                execvp(args[0], args);
-                                // If execvp fails, try with full path
-                                char full_path[512];
-                                snprintf(full_path, sizeof(full_path), "/bin/%s", args[0]);
-                                execv(full_path, args);
-                                snprintf(full_path, sizeof(full_path), "/usr/bin/%s", args[0]);
-                                execv(full_path, args);
-                            }
-                            
-                            fprintf(stderr, "Command not found: %s\n", cmd_part);
-                            exit(127);
-                        } else if (pid > 0) {
-                            // Parent process - wait for child
-                            int status;
-                            waitpid(pid, &status, 0);
-                            exit_code = WEXITSTATUS(status);
-                        } else {
-                            // Fork failed
-                            fprintf(stderr, "Failed to fork for command: %s\n", cmd_part);
-                            exit_code = 1;
-                        }
-                    }
-                    
-                    // Update overall exit code (last non-zero wins)
-                    if (exit_code != 0) {
-                        overall_exit_code = exit_code;
-                    }
-                }
-                
-                // Get next command part
-                cmd_part = strtok(NULL, ";");
-            }
-            
-            return overall_exit_code;
-        }
-        
-        // Handle simple commands (no semicolons)
-        if (strncmp(command, "echo ", 5) == 0) {
-            return builtin_echo(command + 5);
-        } else if (strcmp(command, "echo") == 0) {
-            return builtin_echo("");
-        } else if (strcmp(command, "pwd") == 0) {
-            return builtin_pwd();
-        } else if (strncmp(command, "echo '", 6) == 0 || strncmp(command, "echo \"", 6) == 0) {
-            // Handle quoted echo
-            char *start = command + 6;
-            char *end = strchr(start, command[5]); // Find matching quote
-            if (end) {
-                *end = '\0';
-                printf("%s\n", start);
-                return 0;
-            }
-        }
-        
-        // For other simple commands, try direct execution
-        pid_t pid = fork();
-        if (pid == 0) {
-            // Child process - parse and execute
-            char *args[64];
-            char cmd_copy[1024];
-            int arg_count = 0;
-            
-            strncpy(cmd_copy, command, sizeof(cmd_copy)-1);
-            cmd_copy[sizeof(cmd_copy)-1] = '\0';
-            
-            char *token = strtok(cmd_copy, " ");
-            while (token != NULL && arg_count < 63) {
-                args[arg_count++] = token;
-                token = strtok(NULL, " ");
-            }
-            args[arg_count] = NULL;
-            
-            if (arg_count > 0) {
-                execvp(args[0], args);
-                // Try with full paths if execvp fails
-                char full_path[512];
-                snprintf(full_path, sizeof(full_path), "/bin/%s", args[0]);
-                execv(full_path, args);
-                snprintf(full_path, sizeof(full_path), "/usr/bin/%s", args[0]);
-                execv(full_path, args);
-            }
-            
-            fprintf(stderr, "Command not found: %s\n", command);
-            exit(127);
-        } else if (pid > 0) {
-            // Parent process - wait for child
-            int status;
-            waitpid(pid, &status, 0);
-            return WEXITSTATUS(status);
-        } else {
-            // Fork failed
-            fprintf(stderr, "Failed to fork process\n");
-            return 1;
-        }
-    }
-    
-    // Interactive mode - just print a message and exit
-    printf("Minimal shell ready (use -c for command execution)\n");
-    return 0;
-}
-"#;
-
-        // Try to compile a static shell
-        let temp_c_file = "/tmp/minimal_shell.c";
-        let temp_binary = "/tmp/minimal_shell";
-        
-        fs::write(temp_c_file, c_program)
-            .map_err(|e| format!("Failed to write C file: {}", e))?;
-
-        // First try with static linking
-        let mut compile_result = Command::new("gcc")
-            .args(&["-static", "-o", temp_binary, temp_c_file])
-            .output();
-
-        // If static compilation fails, try regular dynamic compilation
-        if compile_result.is_err() || !compile_result.as_ref().unwrap().status.success() {
-            compile_result = Command::new("gcc")
-                .args(&["-o", temp_binary, temp_c_file])
-                .output();
-        }
-
-        match compile_result {
-            Ok(output) if output.status.success() => {
-                // Check if the binary is usable
-                if Path::new(temp_binary).exists() {
-                    match fs::copy(temp_binary, shell_path) {
-                        Ok(_) => {
-                            let mut perms = fs::metadata(shell_path)
-                                .map_err(|e| format!("Failed to get shell permissions: {}", e))?
-                                .permissions();
-                            perms.set_mode(0o755);
-                            fs::set_permissions(shell_path, perms)
-                                .map_err(|e| format!("Failed to set shell permissions: {}", e))?;
-                            
-                            // Cleanup
-                            fs::remove_file(temp_c_file).ok();
-                            fs::remove_file(temp_binary).ok();
-                            
-                            // Check if it's statically linked
-                            if let Ok(ldd_output) = Command::new("ldd").arg(shell_path).output() {
-                                let ldd_str = String::from_utf8_lossy(&ldd_output.stdout);
-                                if ldd_str.contains("not a dynamic executable") {
-                                    println!("  ✅ Created static shell binary");
-                                } else {
-                                    println!("  ✅ Created dynamic shell binary");
-                                }
-                            } else {
-                                println!("  ✅ Created shell binary");
-                            }
-                            
-                            return Ok(());
-                        }
-                        Err(e) => {
-                            println!("  ⚠ Failed to copy compiled shell: {}", e);
-                        }
-                    }
-                }
-            }
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                println!("  ⚠ Compilation failed: {}", stderr);
-            }
-            Err(e) => {
-                println!("  ⚠ Failed to run compiler: {}", e);
-            }
-        }
-
-        // Cleanup
-        fs::remove_file(temp_c_file).ok();
-        fs::remove_file(temp_binary).ok();
-
-        Err("Could not create minimal shell binary".to_string())
-    }
-
-    /// Create a shell script implementation
-    fn create_shell_script(&self, shell_path: &str) -> Result<(), String> {
-        // Create a simple shell script that uses exec to replace itself
-        let shell_script = r#"#!/bin/sh
-# Simple shell for Quilt containers
-
-if [ "$1" = "-c" ]; then
-    shift
-    # Execute the command using exec to replace the current process
-    # This avoids issues with nested shells and process management
-    exec /bin/sh -c "$*"
-fi
-
-# Interactive mode - simplified
-echo "Container shell ready"
-        exit 0
-"#;
-
-        fs::write(shell_path, shell_script)
-            .map_err(|e| format!("Failed to create shell script: {}", e))?;
-
-        // Make it executable
-        let mut perms = fs::metadata(shell_path)
-            .map_err(|e| format!("Failed to get shell permissions: {}", e))?
-            .permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(shell_path, perms)
-            .map_err(|e| format!("Failed to set shell permissions: {}", e))?;
-
-        println!("  ✅ Created shell script at {}", shell_path);
-        Ok(())
-    }
-
-    /// Create a simple echo script
-    fn create_echo_script(&self, echo_path: &str) -> Result<(), String> {
-        let echo_script = r#"#!/bin/sh
-# Simple echo implementation
-printf '%s\n' "$*"
-"#;
-
-        fs::write(echo_path, echo_script)
-            .map_err(|e| format!("Failed to create echo script: {}", e))?;
-
-        let mut perms = fs::metadata(echo_path)
-            .map_err(|e| format!("Failed to get echo permissions: {}", e))?
-            .permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(echo_path, perms)
-            .map_err(|e| format!("Failed to set echo permissions: {}", e))?;
-
-        println!("  ✅ Created echo script at {}", echo_path);
-        Ok(())
-    }
-
-    /// Create a simple ls script
-    fn create_ls_script(&self, ls_path: &str) -> Result<(), String> {
-        let ls_script = r#"#!/bin/sh
-# Simple ls implementation
-for arg in "$@"; do
-    if [ -d "$arg" ]; then
-        printf 'Contents of %s:\n' "$arg"
-        for f in "$arg"/*; do
-            [ -e "$f" ] && printf '%s\n' "${f##*/}"
-        done
-    elif [ -f "$arg" ]; then
-        printf '%s\n' "$arg"
-    else
-        # Default to current directory
-        for f in ./*; do
-            [ -e "$f" ] && printf '%s\n' "${f##*/}"
-        done
-        break
-    fi
-done
-"#;
-
-        fs::write(ls_path, ls_script)
-            .map_err(|e| format!("Failed to create ls script: {}", e))?;
-
-        let mut perms = fs::metadata(ls_path)
-            .map_err(|e| format!("Failed to get ls permissions: {}", e))?
-            .permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(ls_path, perms)
-            .map_err(|e| format!("Failed to set ls permissions: {}", e))?;
-
-        println!("  ✅ Created ls script at {}", ls_path);
-        Ok(())
-    }
-
-    /// Create a simple cat script
-    fn create_cat_script(&self, cat_path: &str) -> Result<(), String> {
-        let cat_script = r#"#!/bin/sh
-# Simple cat implementation
-if [ $# -eq 0 ]; then
-    # Read from stdin (not practical in this context, just exit)
-    exit 0
-fi
-
-for file in "$@"; do
-    if [ -f "$file" ]; then
-        while IFS= read -r line; do
-            printf '%s\n' "$line"
-        done < "$file"
-    else
-        printf 'cat: %s: No such file or directory\n' "$file" >&2
-    fi
-done
-"#;
-
-        fs::write(cat_path, cat_script)
-            .map_err(|e| format!("Failed to create cat script: {}", e))?;
-
-        let mut perms = fs::metadata(cat_path)
-            .map_err(|e| format!("Failed to get cat permissions: {}", e))?
-            .permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(cat_path, perms)
-            .map_err(|e| format!("Failed to set cat permissions: {}", e))?;
-
-        println!("  ✅ Created cat script at {}", cat_path);
-        Ok(())
-    }
 
     /// Verify that the container shell works
     fn verify_container_shell(&self, rootfs_path: &str) -> Result<(), String> {
