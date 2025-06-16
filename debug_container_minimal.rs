@@ -44,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output = Command::new("./target/debug/cli")
         .args(&["create", 
                "--image-path", "/root/aria-fw/crates/quilt/nixos-minimal.tar.gz",
-               "/bin/sleep", "infinity"])
+               "/bin/sleep", "3600"])
         .output()?;
     
     println!("Create output:");

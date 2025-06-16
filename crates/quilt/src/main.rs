@@ -74,16 +74,16 @@ impl QuiltService for QuiltServiceImpl {
 
         ConsoleLogger::container_created(&container_id);
 
-        // Convert gRPC request to sync engine container config
-        let config = sync::containers::ContainerConfig {
-            id: container_id.clone(),
-            name: None, // gRPC request doesn't have name field
-            image_path: req.image_path,
-            command: if req.command.is_empty() { 
-                "sleep infinity".to_string() // Default for long-running agents
-            } else { 
-                req.command.join(" ")
-            },
+                    // Convert gRPC request to sync engine container config
+            let config = sync::containers::ContainerConfig {
+                id: container_id.clone(),
+                name: None, // gRPC request doesn't have name field
+                image_path: req.image_path,
+                command: if req.command.is_empty() { 
+                    "sleep 86400".to_string() // Default for long-running agents (24 hours)
+                } else { 
+                    req.command.join(" ")
+                },
             environment: req.environment,
             memory_limit_mb: if req.memory_limit_mb > 0 { Some(req.memory_limit_mb as i64) } else { None },
             cpu_limit_percent: if req.cpu_limit_percent > 0.0 { Some(req.cpu_limit_percent as f64) } else { None },

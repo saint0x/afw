@@ -431,7 +431,7 @@ pub async fn handle_container_command(
             // Create production container using enhanced daemon runtime with event-driven readiness
             let create_request = CreateContainerRequest {
                 image_path,
-                command: vec!["sleep".to_string(), "infinity".to_string()], // Default persistent command
+                command: vec!["sleep".to_string(), "86400".to_string()], // Default persistent command (24 hours)
                 environment,
                 working_directory: String::new(), // Empty string instead of None
                 setup_commands: setup,

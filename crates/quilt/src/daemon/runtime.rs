@@ -291,7 +291,7 @@ impl ContainerRuntime {
             } else if command_clone.len() == 2 && command_clone[0] == "sleep" {
                 // Special handling for sleep commands to ensure they work properly
                 let sleep_duration = &command_clone[1];
-                // Validate sleep duration
+                // Validate sleep duration - NOTE: "infinity" is not supported by busybox sleep
                 if sleep_duration.parse::<u64>().is_ok() || sleep_duration == "infinity" {
                     ("/bin/sh".to_string(), vec!["-c".to_string(), format!("exec /bin/sleep {}", sleep_duration)])
                 } else {
