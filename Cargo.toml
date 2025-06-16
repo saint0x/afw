@@ -113,3 +113,7 @@ path = "script7.rs"
 [[bin]]
 name = "debug-container"
 path = "debug_container.rs"
+
+[[bin]]
+name = "test_async_agent_tasks"
+path = "test_async_agent_tasks.rs"

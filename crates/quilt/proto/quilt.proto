@@ -16,8 +16,18 @@ service QuiltService {
     rpc StopContainer (StopContainerRequest) returns (StopContainerResponse);
     // Removes a container
     rpc RemoveContainer (RemoveContainerRequest) returns (RemoveContainerResponse);
-    // Executes a command in a running container
+    // Executes a command in a running container (synchronous)
     rpc ExecContainer (ExecContainerRequest) returns (ExecContainerResponse);
+    // Executes a command in a running container (asynchronous - returns immediately with task ID)
+    rpc ExecContainerAsync (ExecContainerAsyncRequest) returns (ExecContainerAsyncResponse);
+    // Gets the status of an async task
+    rpc GetTaskStatus (GetTaskStatusRequest) returns (GetTaskStatusResponse);
+    // Gets the result of a completed async task
+    rpc GetTaskResult (GetTaskResultRequest) returns (GetTaskResultResponse);
+    // Lists all tasks for a container
+    rpc ListTasks (ListTasksRequest) returns (ListTasksResponse);
+    // Cancels a running async task
+    rpc CancelTask (CancelTaskRequest) returns (CancelTaskResponse);
     // Lists all active containers
     rpc ListContainers (ListContainersRequest) returns (ListContainersResponse);
     // Gets system-level metrics from the host
@@ -35,6 +45,17 @@ enum ContainerStatus {
     RUNNING = 2;   // Container is actively running
     EXITED = 3;    // Container finished execution
     FAILED = 4;    // Container failed to start or execute
+}
+
+// Task status enumeration for async operations
+enum TaskStatus {
+    TASK_UNSPECIFIED = 0;   // Default value
+    TASK_PENDING = 1;       // Task queued but not started
+    TASK_RUNNING = 2;       // Task is currently executing
+    TASK_COMPLETED = 3;     // Task completed successfully
+    TASK_FAILED = 4;        // Task failed with error
+    TASK_CANCELLED = 5;     // Task was cancelled
+    TASK_TIMEOUT = 6;       // Task exceeded timeout limit
 }
 
 message CreateContainerRequest {
@@ -141,6 +162,80 @@ message ExecContainerResponse {
     string stdout = 3;                            // Standard output (if capture_output=true)
     string stderr = 4;                            // Standard error (if capture_output=true)
     string error_message = 5;                     // Error message if execution failed
+}
+
+message ExecContainerAsyncRequest {
+    string container_id = 1;                      // Container ID to execute command in
+    repeated string command = 2;                  // Command and arguments to execute
+    string working_directory = 3;                 // Working directory (optional)
+    map<string, string> environment = 4;          // Additional environment variables
+    bool capture_output = 5;                      // Whether to capture and return output
+    int32 timeout_seconds = 6;                    // Optional timeout (0 = no timeout)
+}
+
+message ExecContainerAsyncResponse {
+    bool success = 1;                             // Whether task was successfully queued
+    string task_id = 2;                           // ID of the asynchronous task
+    string error_message = 3;                     // Error message if queuing failed
+}
+
+message GetTaskStatusRequest {
+    string task_id = 1;                           // ID of the task to query
+}
+
+message GetTaskStatusResponse {
+    string task_id = 1;                           // ID of the task
+    TaskStatus status = 2;                        // Current status of the task
+    uint64 started_at = 3;                        // When the task started (unix timestamp)
+    uint64 completed_at = 4;                      // When the task completed (unix timestamp, 0 if not completed)
+    int32 exit_code = 5;                         // Exit code (if completed)
+    string error_message = 6;                     // Error message (if failed)
+    double progress_percent = 7;                  // Optional progress indicator (0.0-100.0)
+    string current_operation = 8;                 // Description of current operation
+}
+
+message GetTaskResultRequest {
+    string task_id = 1;                           // ID of the task to get result for
+}
+
+message GetTaskResultResponse {
+    string task_id = 1;                           // ID of the task
+    TaskStatus status = 2;                        // Final status of the task
+    bool success = 3;                             // Whether the task completed successfully
+    int32 exit_code = 4;                         // Exit code of the executed command
+    string stdout = 5;                            // Standard output (if capture_output=true)
+    string stderr = 6;                            // Standard error (if capture_output=true)
+    string error_message = 7;                     // Error message (if failed)
+    uint64 started_at = 8;                        // When the task started (unix timestamp)
+    uint64 completed_at = 9;                      // When the task completed (unix timestamp)
+    uint64 execution_time_ms = 10;                // Total execution time in milliseconds
+}
+
+message ListTasksRequest {
+    string container_id = 1;                      // Container ID to list tasks for (optional)
+    TaskStatus status_filter = 2;                 // Optional filter by task status
+}
+
+message TaskInfo {
+    string task_id = 1;                           // ID of the task
+    string container_id = 2;                      // Container ID where task is running
+    TaskStatus status = 3;                        // Current status
+    repeated string command = 4;                  // Command being executed
+    uint64 started_at = 5;                        // When the task started
+    uint64 completed_at = 6;                      // When the task completed (0 if not completed)
+}
+
+message ListTasksResponse {
+    repeated TaskInfo tasks = 1;                  // List of tasks
+}
+
+message CancelTaskRequest {
+    string task_id = 1;                            // ID of the task to cancel
+}
+
+message CancelTaskResponse {
+    bool success = 1;                             // Whether the task was successfully canceled
+    string error_message = 2;                      // Error message (if any)
 }
 
 message ListContainersRequest {

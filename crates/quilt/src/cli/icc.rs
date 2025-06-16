@@ -6,12 +6,13 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tonic::transport::Channel;
 
-// Use protobuf definitions from parent
-use crate::quilt::quilt_service_client::QuiltServiceClient;
+// Import protobuf definitions
 use crate::quilt::{
-    GetContainerStatusRequest,
-    ExecContainerRequest,
-    ContainerStatus,
+    quilt_service_client::QuiltServiceClient, GetContainerStatusRequest, ExecContainerRequest,
+    ExecContainerAsyncRequest, GetTaskStatusRequest, GetTaskResultRequest,
+    ListTasksRequest, CancelTaskRequest, ContainerStatus,
+    ExecContainerAsyncResponse, GetTaskStatusResponse, GetTaskResultResponse,
+    ListTasksResponse, CancelTaskResponse, TaskStatus,
 };
 
 #[derive(Debug, Clone)]
@@ -117,6 +118,51 @@ pub enum IccCommands {
         env: Vec<String>,
         #[clap(help = "Command and arguments to execute", required = true, num_args = 1..)]
         command: Vec<String>,
+    },
+
+    /// Execute commands asynchronously (returns task ID immediately)
+    #[clap(name = "exec-async")]
+    ExecAsync {
+        #[clap(help = "Container ID to execute command in")]
+        container_id: String,
+        #[clap(long, help = "Working directory inside container")]
+        workdir: Option<String>,
+        #[clap(long, help = "Environment variables", action = clap::ArgAction::Append)]
+        env: Vec<String>,
+        #[clap(long, help = "Timeout in seconds (0 = no timeout)", default_value = "0")]
+        timeout: u32,
+        #[clap(help = "Command and arguments to execute", required = true, num_args = 1..)]
+        command: Vec<String>,
+    },
+
+    /// Get status of an async task
+    #[clap(name = "task-status")]
+    TaskStatus {
+        #[clap(help = "Task ID to check status for")]
+        task_id: String,
+    },
+
+    /// Get result of a completed async task
+    #[clap(name = "task-result")]
+    TaskResult {
+        #[clap(help = "Task ID to get result for")]
+        task_id: String,
+    },
+
+    /// List all tasks (optionally filtered by container)
+    #[clap(name = "list-tasks")]
+    ListTasks {
+        #[clap(long, help = "Filter by container ID")]
+        container: Option<String>,
+        #[clap(long, help = "Filter by status: pending, running, completed, failed, cancelled, timeout")]
+        status: Option<String>,
+    },
+
+    /// Cancel a running async task
+    #[clap(name = "cancel-task")]
+    CancelTask {
+        #[clap(help = "Task ID to cancel")]
+        task_id: String,
     },
 
     /// Show network topology and information
@@ -240,6 +286,21 @@ pub async fn handle_icc_command(cmd: IccCommands, mut client: QuiltServiceClient
         },
         IccCommands::Exec { container_id, workdir, env, command } => {
             handle_exec_command(container_id, workdir, env, command, &mut client).await
+        },
+        IccCommands::ExecAsync { container_id, workdir, env, timeout, command } => {
+            handle_exec_async_command(container_id, workdir, env, timeout, command, &mut client).await
+        },
+        IccCommands::TaskStatus { task_id } => {
+            handle_task_status_command(task_id, &mut client).await
+        },
+        IccCommands::TaskResult { task_id } => {
+            handle_task_result_command(task_id, &mut client).await
+        },
+        IccCommands::ListTasks { container, status } => {
+            handle_list_tasks_command(container, status, &mut client).await
+        },
+        IccCommands::CancelTask { task_id } => {
+            handle_cancel_task_command(task_id, &mut client).await
         },
         IccCommands::Network { action } => {
             handle_network_command(action, &mut client).await
@@ -526,6 +587,260 @@ async fn handle_exec_command(
         }
         Err(e) => {
             Err(format!("Failed to execute command: {}", e).into())
+        }
+    }
+}
+
+async fn handle_exec_async_command(
+    container_id: String,
+    workdir: Option<String>,
+    env: Vec<String>,
+    timeout: u32,
+    command: Vec<String>,
+    client: &mut QuiltServiceClient<Channel>
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("⚡ Executing command asynchronously in container {}", container_id);
+    println!("   Command: {:?}", command);
+    if let Some(ref workdir) = workdir {
+        println!("   Working directory: {}", workdir);
+    }
+    if !env.is_empty() {
+        println!("   Environment variables: {:?}", env);
+    }
+
+    // Parse environment variables from "KEY=VALUE" format
+    let mut environment = HashMap::new();
+    for env_var in env {
+        if let Some((key, value)) = env_var.split_once('=') {
+            environment.insert(key.to_string(), value.to_string());
+        } else {
+            return Err(format!("Invalid environment variable format: {}. Use KEY=VALUE", env_var).into());
+        }
+    }
+
+    // Execute the command asynchronously
+    let mut exec_request = tonic::Request::new(ExecContainerAsyncRequest {
+        container_id: container_id.clone(),
+        command,
+        working_directory: workdir.unwrap_or_default(),
+        environment,
+        capture_output: true,
+        timeout_seconds: timeout as i32,
+    });
+    exec_request.set_timeout(Duration::from_secs(120)); // Extended timeout for exec commands
+
+    match client.exec_container_async(exec_request).await {
+        Ok(response) => {
+            let result = response.into_inner();
+            
+            if result.success {
+                println!("✅ Async task started successfully!");
+                println!("🎯 Task ID: {}", result.task_id);
+                println!("💡 Use 'icc task-status {}' to check progress", result.task_id);
+                println!("💡 Use 'icc task-result {}' to get final result", result.task_id);
+            } else {
+                println!("❌ Failed to start async task: {}", result.error_message);
+            }
+            
+            Ok(())
+        }
+        Err(e) => {
+            Err(format!("Failed to start async task: {}", e).into())
+        }
+    }
+}
+
+async fn handle_task_status_command(task_id: String, client: &mut QuiltServiceClient<Channel>) -> Result<(), Box<dyn std::error::Error>> {
+    println!("🔍 Checking status of task {}", task_id);
+
+    let mut request = tonic::Request::new(GetTaskStatusRequest {
+        task_id: task_id.clone(),
+    });
+    request.set_timeout(Duration::from_secs(60));
+
+    match client.get_task_status(request).await {
+        Ok(response) => {
+            let status = response.into_inner();
+            let task_status = match TaskStatus::from_i32(status.status) {
+                Some(TaskStatus::TaskUnspecified) => "UNSPECIFIED",
+                Some(TaskStatus::TaskPending) => "PENDING", 
+                Some(TaskStatus::TaskRunning) => "RUNNING",
+                Some(TaskStatus::TaskCompleted) => "COMPLETED",
+                Some(TaskStatus::TaskFailed) => "FAILED",
+                Some(TaskStatus::TaskCancelled) => "CANCELLED",
+                Some(TaskStatus::TaskTimeout) => "TIMEOUT",
+                None => "UNKNOWN",
+            };
+            
+            println!("📊 Task Status: {}", task_status);
+            if status.started_at > 0 {
+                println!("⏰ Started: {}", status.started_at);
+            }
+            if status.completed_at > 0 {
+                println!("🏁 Completed: {}", status.completed_at);
+            }
+            if status.progress_percent > 0.0 {
+                println!("📈 Progress: {:.1}%", status.progress_percent);
+            }
+            if !status.current_operation.is_empty() {
+                println!("⚙️ Current Operation: {}", status.current_operation);
+            }
+            if !status.error_message.is_empty() {
+                println!("❌ Error: {}", status.error_message);
+            }
+            
+            Ok(())
+        }
+        Err(e) => {
+            Err(format!("Failed to get status for task {}: {}", task_id, e).into())
+        }
+    }
+}
+
+async fn handle_task_result_command(task_id: String, client: &mut QuiltServiceClient<Channel>) -> Result<(), Box<dyn std::error::Error>> {
+    println!("🎯 Getting result for task {}", task_id);
+
+    let mut request = tonic::Request::new(GetTaskResultRequest {
+        task_id: task_id.clone(),
+    });
+    request.set_timeout(Duration::from_secs(60));
+
+    match client.get_task_result(request).await {
+        Ok(response) => {
+            let result = response.into_inner();
+            let task_status = match TaskStatus::from_i32(result.status) {
+                Some(TaskStatus::TaskUnspecified) => "UNSPECIFIED",
+                Some(TaskStatus::TaskPending) => "PENDING", 
+                Some(TaskStatus::TaskRunning) => "RUNNING",
+                Some(TaskStatus::TaskCompleted) => "COMPLETED",
+                Some(TaskStatus::TaskFailed) => "FAILED",
+                Some(TaskStatus::TaskCancelled) => "CANCELLED",
+                Some(TaskStatus::TaskTimeout) => "TIMEOUT",
+                None => "UNKNOWN",
+            };
+            
+            println!("📊 Final Status: {}", task_status);
+            println!("✅ Success: {}", result.success);
+            println!("🔢 Exit Code: {}", result.exit_code);
+            
+            if !result.stdout.is_empty() {
+                println!("📤 Output:");
+                println!("{}", result.stdout);
+            }
+            
+            if !result.stderr.is_empty() {
+                println!("📤 Error Output:");
+                println!("{}", result.stderr);
+            }
+            
+            if !result.error_message.is_empty() {
+                println!("❌ Error Message: {}", result.error_message);
+            }
+            
+            if result.execution_time_ms > 0 {
+                println!("⏱️ Execution Time: {}ms", result.execution_time_ms);
+            }
+            
+            Ok(())
+        }
+        Err(e) => {
+            Err(format!("Failed to get result for task {}: {}", task_id, e).into())
+        }
+    }
+}
+
+async fn handle_list_tasks_command(container: Option<String>, status: Option<String>, client: &mut QuiltServiceClient<Channel>) -> Result<(), Box<dyn std::error::Error>> {
+    println!("📋 Listing tasks");
+    if let Some(ref container) = container {
+        println!("   Filter: Container {}", container);
+    }
+    if let Some(ref status) = status {
+        println!("   Filter: Status {}", status);
+    }
+
+    // Convert status string to enum value
+    let status_filter = match status.as_deref() {
+        Some("pending") => TaskStatus::TaskPending as i32,
+        Some("running") => TaskStatus::TaskRunning as i32, 
+        Some("completed") => TaskStatus::TaskCompleted as i32,
+        Some("failed") => TaskStatus::TaskFailed as i32,
+        Some("cancelled") => TaskStatus::TaskCancelled as i32,
+        Some("timeout") => TaskStatus::TaskTimeout as i32,
+        _ => TaskStatus::TaskUnspecified as i32, // UNSPECIFIED = no filter
+    };
+
+    let mut request = tonic::Request::new(ListTasksRequest {
+        container_id: container.unwrap_or_default(),
+        status_filter,
+    });
+    request.set_timeout(Duration::from_secs(60));
+
+    match client.list_tasks(request).await {
+        Ok(response) => {
+            let result = response.into_inner();
+            
+            if result.tasks.is_empty() {
+                println!("📭 No tasks found matching criteria");
+            } else {
+                println!("📋 Found {} task(s):", result.tasks.len());
+                println!();
+                
+                for task in result.tasks {
+                    let task_status = match TaskStatus::from_i32(task.status) {
+                        Some(TaskStatus::TaskUnspecified) => "UNSPECIFIED",
+                        Some(TaskStatus::TaskPending) => "PENDING", 
+                        Some(TaskStatus::TaskRunning) => "RUNNING",
+                        Some(TaskStatus::TaskCompleted) => "COMPLETED",
+                        Some(TaskStatus::TaskFailed) => "FAILED",
+                        Some(TaskStatus::TaskCancelled) => "CANCELLED",
+                        Some(TaskStatus::TaskTimeout) => "TIMEOUT",
+                        None => "UNKNOWN",
+                    };
+                    
+                    println!("🎯 Task ID: {}", task.task_id);
+                    println!("📦 Container: {}", task.container_id);
+                    println!("📊 Status: {}", task_status);
+                    println!("⚙️ Command: {:?}", task.command);
+                    if task.started_at > 0 {
+                        println!("⏰ Started: {}", task.started_at);
+                    }
+                    if task.completed_at > 0 {
+                        println!("🏁 Completed: {}", task.completed_at);
+                    }
+                    println!("---");
+                }
+            }
+            
+            Ok(())
+        }
+        Err(e) => {
+            Err(format!("Failed to list tasks: {}", e).into())
+        }
+    }
+}
+
+async fn handle_cancel_task_command(task_id: String, client: &mut QuiltServiceClient<Channel>) -> Result<(), Box<dyn std::error::Error>> {
+    println!("🚫 Canceling task {}", task_id);
+
+    let mut request = tonic::Request::new(CancelTaskRequest {
+        task_id: task_id.clone(),
+    });
+    request.set_timeout(Duration::from_secs(60));
+
+    match client.cancel_task(request).await {
+        Ok(response) => {
+            let result = response.into_inner();
+            
+            if result.success {
+                println!("✅ Task {} cancelled successfully", task_id);
+            } else {
+                println!("❌ Failed to cancel task: {}", result.error_message);
+            }
+            
+            Ok(())
+        }
+        Err(e) => {
+            Err(format!("Failed to cancel task {}: {}", task_id, e).into())
         }
     }
 }

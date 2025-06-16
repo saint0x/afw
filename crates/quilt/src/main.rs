@@ -32,6 +32,11 @@ use quilt::{
     ContainerStatus, ListContainersRequest, ListContainersResponse, ContainerInfo,
     GetSystemMetricsRequest, GetSystemMetricsResponse, GetNetworkTopologyRequest, GetNetworkTopologyResponse, NetworkNode,
     GetContainerNetworkInfoRequest, GetContainerNetworkInfoResponse,
+    ExecContainerAsyncRequest, ExecContainerAsyncResponse,
+    GetTaskStatusRequest, GetTaskStatusResponse,
+    GetTaskResultRequest, GetTaskResultResponse,
+    ListTasksRequest, ListTasksResponse, TaskInfo,
+    CancelTaskRequest, CancelTaskResponse,
 };
 use sysinfo::System;
 
@@ -393,6 +398,103 @@ impl QuiltService for QuiltServiceImpl {
                 Err(Status::not_found(format!("Container {} not found", req.container_id)))
             }
         }
+    }
+
+    async fn exec_container_async(
+        &self,
+        request: Request<ExecContainerAsyncRequest>,
+    ) -> Result<Response<ExecContainerAsyncResponse>, Status> {
+        let req = request.into_inner();
+        let task_id = uuid::Uuid::new_v4().to_string();
+        
+        ConsoleLogger::info(&format!("🚀 [GRPC] Async exec request for: {} with command: {:?} (task_id: {})", req.container_id, req.command, task_id));
+        
+        // TODO: Implement async task management system
+        // For now, return a placeholder response
+        Ok(Response::new(ExecContainerAsyncResponse {
+            success: true,
+            task_id,
+            error_message: String::new(),
+        }))
+    }
+
+    async fn get_task_status(
+        &self,
+        request: Request<GetTaskStatusRequest>,
+    ) -> Result<Response<GetTaskStatusResponse>, Status> {
+        let req = request.into_inner();
+        
+        ConsoleLogger::debug(&format!("🔍 [GRPC] Task status request for: {}", req.task_id));
+        
+        // TODO: Implement task status lookup
+        // For now, return a placeholder response
+        use quilt::TaskStatus;
+        Ok(Response::new(GetTaskStatusResponse {
+            task_id: req.task_id,
+            status: TaskStatus::TaskCompleted as i32,
+            started_at: 0,
+            completed_at: 0,
+            exit_code: 0,
+            error_message: String::new(),
+            progress_percent: 100.0,
+            current_operation: "Task completed".to_string(),
+        }))
+    }
+
+    async fn get_task_result(
+        &self,
+        request: Request<GetTaskResultRequest>,
+    ) -> Result<Response<GetTaskResultResponse>, Status> {
+        let req = request.into_inner();
+        
+        ConsoleLogger::debug(&format!("🔍 [GRPC] Task result request for: {}", req.task_id));
+        
+        // TODO: Implement task result retrieval
+        // For now, return a placeholder response
+        use quilt::TaskStatus;
+        Ok(Response::new(GetTaskResultResponse {
+            task_id: req.task_id,
+            status: TaskStatus::TaskCompleted as i32,
+            success: true,
+            exit_code: 0,
+            stdout: "Task completed successfully".to_string(),
+            stderr: String::new(),
+            error_message: String::new(),
+            started_at: 0,
+            completed_at: 0,
+            execution_time_ms: 0,
+        }))
+    }
+
+    async fn list_tasks(
+        &self,
+        request: Request<ListTasksRequest>,
+    ) -> Result<Response<ListTasksResponse>, Status> {
+        let req = request.into_inner();
+        
+        ConsoleLogger::debug(&format!("🔍 [GRPC] List tasks request for container: {:?}", req.container_id));
+        
+        // TODO: Implement task listing
+        // For now, return empty list
+        Ok(Response::new(ListTasksResponse {
+            tasks: vec![],
+        }))
+    }
+
+    async fn cancel_task(
+        &self,
+        request: Request<CancelTaskRequest>,
+    ) -> Result<Response<CancelTaskResponse>, Status> {
+        let req = request.into_inner();
+        
+        ConsoleLogger::info(&format!("🔄 [GRPC] Cancel task request for: {}", req.task_id));
+        
+        // TODO: Implement task cancellation
+        // For now, return success
+        Ok(Response::new(CancelTaskResponse {
+            success: true,
+            error_message: String::new(),
+        }))
     }
 
     async fn list_containers(
