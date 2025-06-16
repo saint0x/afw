@@ -17,6 +17,8 @@ use crate::engines::tool_registry::ToolRegistry;
 use crate::engines::system_prompt::SystemPromptService;
 use crate::engines::container::quilt::QuiltService;
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::path::PathBuf;
 
 pub mod execution;
 pub mod planning;
@@ -70,6 +72,24 @@ impl AriaEngines {
         self.conversation.health_check() &&
         self.reflection.health_check() &&
         self.context_manager.health_check()
+    }
+
+    pub async fn new() -> Self {
+        let llm_handler = Arc::new(LLMHandler::new(Default::default()));
+        let container_manager = Arc::new(QuiltService::new().await.expect("Failed to create QuiltService"));
+        let tool_registry = Arc::new(ToolRegistry::new(llm_handler.clone(), container_manager.clone()));
+
+        Self {
+            planning: Arc::new(PlanningEngine::new(llm_handler.clone())),
+            execution: Arc::new(ExecutionEngine::new(llm_handler.clone(), container_manager)),
+            reflection: Arc::new(ReflectionEngine::new(llm_handler.clone())),
+            conversation: Arc::new(ConversationEngine::new(llm_handler.clone())),
+            tool_registry,
+            context_manager: Arc::new(ContextManager::new(PathBuf::from("./.aria/sessions"))),
+            llm: llm_handler,
+            system_prompt: Arc::new(SystemPromptService::new(PathBuf::from("./.aria/prompts"))),
+            quilt_service: container_manager,
+        }
     }
 }
 

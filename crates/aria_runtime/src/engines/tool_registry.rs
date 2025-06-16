@@ -10,13 +10,27 @@ use crate::tools::standard::{
     write_file_tool_handler,
     read_file_tool_handler,
     parse_document_tool_handler,
-    write_code_tool_handler
+    write_code_tool_handler,
+    calculator::CalculatorTool,
+    create_plan::CreatePlanTool,
+    data_formatter::DataFormatterTool,
+    file_writer::FileWriterTool,
+    parse_document::ParseDocumentTool,
+    ponder::PonderTool,
+    read_file::ReadFileTool,
+    text_analyzer::TextAnalyzerTool,
+    web_search::WebSearchTool,
+    write_code::WriteCodeTool,
+    write_file::WriteFileTool,
+    container_execution::ContainerExecutionTool,
 };
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use crate::engines::Engine;
+use crate::engines::execution::ExecutionEngine;
 
 #[async_trait]
 pub trait ToolRegistryInterface: Send + Sync {
@@ -55,6 +69,7 @@ pub struct ToolRegistry {
     execution_stats: Arc<RwLock<HashMap<String, ToolExecutionStats>>>,
     bundle_store: Option<Arc<dyn BundleStoreInterface>>,
     llm_handler: Arc<LLMHandler>,
+    execution_engine: Arc<dyn ExecutionEngine>,
 }
 
 #[derive(Debug, Clone)]
@@ -107,14 +122,17 @@ pub enum SecurityLevel {
 impl ToolRegistry {
     pub fn new(
         llm_handler: Arc<LLMHandler>,
+        execution_engine: Arc<dyn ExecutionEngine>,
     ) -> Self {
         let registry = Self {
             tools: Arc::new(RwLock::new(HashMap::new())),
             execution_stats: Arc::new(RwLock::new(HashMap::new())),
             bundle_store: None,
             llm_handler,
+            execution_engine,
         };
         let tools_arc = registry.tools.clone();
+        let llm_arc = registry.llm_handler.clone();
         tokio::spawn(async move {
             let builtin_tools = vec![
                 Self::create_ponder_tool_static(),
@@ -136,6 +154,12 @@ impl ToolRegistry {
             }
             println!("✅ Registered {} builtin tools", tools.len());
         });
+        self.register_tool(Arc::new(ParseDocumentTool::new(self.llm_handler.clone()))).await;
+        self.register_tool(Arc::new(WriteCodeTool::new(self.llm_handler.clone()))).await;
+        self.register_tool(Arc::new(ContainerExecutionTool::new(self.execution_engine.clone()))).await;
+
+        // From the old tools
+        self.register_tool(Arc::new(CalculatorTool {})).await;
         registry
     }
 

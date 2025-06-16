@@ -97,3 +97,7 @@ path = "script.rs"
 [[bin]]
 name = "container-test"
 path = "script4.rs"
+
+[[bin]]
+name = "conversational-container-test"
+path = "script5.rs"
