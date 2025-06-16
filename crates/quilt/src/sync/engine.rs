@@ -8,6 +8,7 @@ use crate::sync::{
     network::{NetworkManager, NetworkConfig, NetworkAllocation},
     monitor::ProcessMonitorService,
     cleanup::CleanupService,
+    async_tasks::{AsyncTaskManager, AsyncTask, AsyncTaskStatus},
     error::{SyncError, SyncResult},
 };
 
@@ -18,6 +19,7 @@ pub struct SyncEngine {
     network_manager: Arc<NetworkManager>,
     monitor_service: Arc<ProcessMonitorService>,
     cleanup_service: Arc<CleanupService>,
+    async_task_manager: Arc<AsyncTaskManager>,
     
     // Background services control
     background_tasks: Arc<RwLock<Vec<tokio::task::JoinHandle<()>>>>,
@@ -38,6 +40,7 @@ impl SyncEngine {
         let network_manager = Arc::new(NetworkManager::new(connection_manager.pool().clone()));
         let monitor_service = Arc::new(ProcessMonitorService::new(connection_manager.pool().clone()));
         let cleanup_service = Arc::new(CleanupService::new(connection_manager.pool().clone()));
+        let async_task_manager = Arc::new(AsyncTaskManager::new(connection_manager.pool().clone()));
         
         let engine = Self {
             connection_manager,
@@ -45,6 +48,7 @@ impl SyncEngine {
             network_manager,
             monitor_service,
             cleanup_service,
+            async_task_manager,
             background_tasks: Arc::new(RwLock::new(Vec::new())),
         };
         
@@ -77,6 +81,19 @@ impl SyncEngine {
             }
         });
         tasks.push(monitor_cleanup_task);
+        
+        // Start async task cleanup (runs every hour)
+        let async_task_manager = self.async_task_manager.clone();
+        let async_cleanup_task = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(3600)); // 1 hour
+            loop {
+                interval.tick().await;
+                if let Err(e) = async_task_manager.cleanup_old_tasks(Duration::from_secs(86400)).await { // 24 hours
+                    tracing::warn!("Failed to cleanup old async tasks: {}", e);
+                }
+            }
+        });
+        tasks.push(async_cleanup_task);
         
         tracing::info!("Started {} background services", tasks.len());
         Ok(())
@@ -263,6 +280,33 @@ impl SyncEngine {
     /// List cleanup tasks for a container
     pub async fn list_cleanup_tasks(&self, container_id: &str) -> SyncResult<Vec<crate::sync::cleanup::CleanupTask>> {
         self.cleanup_service.list_container_cleanup_tasks(container_id).await
+    }
+    
+    // === Async Task Management ===
+    
+    /// Submit an async exec task for a container
+    pub async fn submit_async_exec_task(
+        &self,
+        container_id: &str,
+        command: Vec<String>,
+        timeout_seconds: Option<i64>,
+    ) -> SyncResult<String> {
+        self.async_task_manager.submit_exec_task(container_id, command, timeout_seconds).await
+    }
+    
+    /// Cancel a running async task
+    pub async fn cancel_async_task(&self, task_id: &str) -> SyncResult<bool> {
+        self.async_task_manager.cancel_task(task_id).await
+    }
+    
+    /// Get async task status and results
+    pub async fn get_async_task_status(&self, task_id: &str) -> SyncResult<AsyncTask> {
+        self.async_task_manager.get_task_status(task_id).await
+    }
+    
+    /// List async tasks for a container
+    pub async fn list_async_tasks(&self, container_id: &str) -> SyncResult<Vec<AsyncTask>> {
+        self.async_task_manager.list_container_tasks(container_id).await
     }
     
     // === Utility Methods ===

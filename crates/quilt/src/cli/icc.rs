@@ -627,7 +627,8 @@ async fn handle_exec_async_command(
         capture_output: true,
         timeout_seconds: timeout as i32,
     });
-    exec_request.set_timeout(Duration::from_secs(120)); // Extended timeout for exec commands
+    // Async exec should be instant (just returns task ID), so use the client's default 5-minute timeout
+    // No need to override with a shorter timeout
 
     match client.exec_container_async(exec_request).await {
         Ok(response) => {

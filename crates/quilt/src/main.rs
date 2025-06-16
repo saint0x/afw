@@ -80,16 +80,16 @@ impl QuiltService for QuiltServiceImpl {
 
         ConsoleLogger::container_created(&container_id);
 
-                    // Convert gRPC request to sync engine container config
-            let config = sync::containers::ContainerConfig {
-                id: container_id.clone(),
-                name: None, // gRPC request doesn't have name field
-                image_path: req.image_path,
-                command: if req.command.is_empty() { 
+        // Convert gRPC request to sync engine container config
+        let config = sync::containers::ContainerConfig {
+            id: container_id.clone(),
+            name: None, // gRPC request doesn't have name field
+            image_path: req.image_path,
+            command: if req.command.is_empty() { 
                     "sleep 86400".to_string() // Default for long-running agents (24 hours)
-                } else { 
-                    req.command.join(" ")
-                },
+            } else { 
+                req.command.join(" ")
+            },
             environment: req.environment,
             memory_limit_mb: if req.memory_limit_mb > 0 { Some(req.memory_limit_mb as i64) } else { None },
             cpu_limit_percent: if req.cpu_limit_percent > 0.0 { Some(req.cpu_limit_percent as f64) } else { None },
@@ -405,17 +405,52 @@ impl QuiltService for QuiltServiceImpl {
         request: Request<ExecContainerAsyncRequest>,
     ) -> Result<Response<ExecContainerAsyncResponse>, Status> {
         let req = request.into_inner();
-        let task_id = uuid::Uuid::new_v4().to_string();
         
-        ConsoleLogger::info(&format!("🚀 [GRPC] Async exec request for: {} with command: {:?} (task_id: {})", req.container_id, req.command, task_id));
+        ConsoleLogger::info(&format!("🚀 [GRPC] Async exec request for: {} with command: {:?}", req.container_id, req.command));
         
-        // TODO: Implement async task management system
-        // For now, return a placeholder response
-        Ok(Response::new(ExecContainerAsyncResponse {
-            success: true,
-            task_id,
-            error_message: String::new(),
-        }))
+        // Validate container exists and is running
+        match self.sync_engine.get_container_status(&req.container_id).await {
+            Ok(status) => {
+                if status.state != sync::containers::ContainerState::Running {
+                    return Ok(Response::new(ExecContainerAsyncResponse {
+                        success: false,
+                        task_id: String::new(),
+                        error_message: format!("Container {} is not running (state: {:?})", req.container_id, status.state),
+                    }));
+                }
+            }
+            Err(e) => {
+                return Ok(Response::new(ExecContainerAsyncResponse {
+                    success: false,
+                    task_id: String::new(),
+                    error_message: format!("Container not found: {}", e),
+                }));
+            }
+        }
+        
+        // Submit async task
+        match self.sync_engine.submit_async_exec_task(
+            &req.container_id,
+            req.command,
+            if req.timeout_seconds == 0 { None } else { Some(req.timeout_seconds as i64) },
+        ).await {
+            Ok(task_id) => {
+                ConsoleLogger::info(&format!("✅ [GRPC] Submitted async task {} for container {}", task_id, req.container_id));
+                Ok(Response::new(ExecContainerAsyncResponse {
+                    success: true,
+                    task_id,
+                    error_message: String::new(),
+                }))
+            }
+            Err(e) => {
+                ConsoleLogger::error(&format!("❌ [GRPC] Failed to submit async task: {}", e));
+                Ok(Response::new(ExecContainerAsyncResponse {
+                    success: false,
+                    task_id: String::new(),
+                    error_message: format!("Failed to submit async task: {}", e),
+                }))
+            }
+        }
     }
 
     async fn get_task_status(
@@ -426,19 +461,49 @@ impl QuiltService for QuiltServiceImpl {
         
         ConsoleLogger::debug(&format!("🔍 [GRPC] Task status request for: {}", req.task_id));
         
-        // TODO: Implement task status lookup
-        // For now, return a placeholder response
-        use quilt::TaskStatus;
-        Ok(Response::new(GetTaskStatusResponse {
-            task_id: req.task_id,
-            status: TaskStatus::TaskCompleted as i32,
-            started_at: 0,
-            completed_at: 0,
-            exit_code: 0,
-            error_message: String::new(),
-            progress_percent: 100.0,
-            current_operation: "Task completed".to_string(),
-        }))
+        match self.sync_engine.get_async_task_status(&req.task_id).await {
+            Ok(task) => {
+                use quilt::TaskStatus;
+                let status = match task.status {
+                    sync::async_tasks::AsyncTaskStatus::Pending => TaskStatus::TaskPending,
+                    sync::async_tasks::AsyncTaskStatus::Running => TaskStatus::TaskRunning,
+                    sync::async_tasks::AsyncTaskStatus::Completed => TaskStatus::TaskCompleted,
+                    sync::async_tasks::AsyncTaskStatus::Failed => TaskStatus::TaskFailed,
+                    sync::async_tasks::AsyncTaskStatus::Cancelled => TaskStatus::TaskCancelled,
+                };
+                
+                let progress_percent = match task.status {
+                    sync::async_tasks::AsyncTaskStatus::Pending => 0.0,
+                    sync::async_tasks::AsyncTaskStatus::Running => 50.0,
+                    sync::async_tasks::AsyncTaskStatus::Completed => 100.0,
+                    sync::async_tasks::AsyncTaskStatus::Failed => 100.0,
+                    sync::async_tasks::AsyncTaskStatus::Cancelled => 100.0,
+                };
+                
+                let current_operation = match task.status {
+                    sync::async_tasks::AsyncTaskStatus::Pending => "Task queued".to_string(),
+                    sync::async_tasks::AsyncTaskStatus::Running => format!("Executing: {}", task.command.join(" ")),
+                    sync::async_tasks::AsyncTaskStatus::Completed => "Task completed successfully".to_string(),
+                    sync::async_tasks::AsyncTaskStatus::Failed => "Task failed".to_string(),
+                    sync::async_tasks::AsyncTaskStatus::Cancelled => "Task was cancelled".to_string(),
+                };
+                
+                Ok(Response::new(GetTaskStatusResponse {
+                    task_id: req.task_id,
+                    status: status as i32,
+                    started_at: task.started_at.unwrap_or(0) as u64,
+                    completed_at: task.completed_at.unwrap_or(0) as u64,
+                    exit_code: task.exit_code.unwrap_or(0) as i32,
+                    error_message: task.error_message.unwrap_or_default(),
+                    progress_percent,
+                    current_operation,
+                }))
+            }
+            Err(e) => {
+                ConsoleLogger::warning(&format!("Task {} not found: {}", req.task_id, e));
+                Err(Status::not_found(format!("Task not found: {}", e)))
+            }
+        }
     }
 
     async fn get_task_result(
@@ -449,21 +514,42 @@ impl QuiltService for QuiltServiceImpl {
         
         ConsoleLogger::debug(&format!("🔍 [GRPC] Task result request for: {}", req.task_id));
         
-        // TODO: Implement task result retrieval
-        // For now, return a placeholder response
-        use quilt::TaskStatus;
-        Ok(Response::new(GetTaskResultResponse {
-            task_id: req.task_id,
-            status: TaskStatus::TaskCompleted as i32,
-            success: true,
-            exit_code: 0,
-            stdout: "Task completed successfully".to_string(),
-            stderr: String::new(),
-            error_message: String::new(),
-            started_at: 0,
-            completed_at: 0,
-            execution_time_ms: 0,
-        }))
+        match self.sync_engine.get_async_task_status(&req.task_id).await {
+            Ok(task) => {
+                use quilt::TaskStatus;
+                let status = match task.status {
+                    sync::async_tasks::AsyncTaskStatus::Pending => TaskStatus::TaskPending,
+                    sync::async_tasks::AsyncTaskStatus::Running => TaskStatus::TaskRunning,
+                    sync::async_tasks::AsyncTaskStatus::Completed => TaskStatus::TaskCompleted,
+                    sync::async_tasks::AsyncTaskStatus::Failed => TaskStatus::TaskFailed,
+                    sync::async_tasks::AsyncTaskStatus::Cancelled => TaskStatus::TaskCancelled,
+                };
+                
+                let success = matches!(task.status, sync::async_tasks::AsyncTaskStatus::Completed);
+                
+                let execution_time_ms = match (task.started_at, task.completed_at) {
+                    (Some(start), Some(end)) => ((end - start) * 1000) as u64, // Convert seconds to milliseconds
+                    _ => 0u64,
+                };
+                
+                Ok(Response::new(GetTaskResultResponse {
+                    task_id: req.task_id,
+                    status: status as i32,
+                    success,
+                    exit_code: task.exit_code.unwrap_or(-1) as i32,
+                    stdout: task.stdout.unwrap_or_default(),
+                    stderr: task.stderr.unwrap_or_default(),
+                    error_message: task.error_message.unwrap_or_default(),
+                    started_at: task.started_at.unwrap_or(0) as u64,
+                    completed_at: task.completed_at.unwrap_or(0) as u64,
+                    execution_time_ms,
+                }))
+            }
+            Err(e) => {
+                ConsoleLogger::warning(&format!("Task {} not found: {}", req.task_id, e));
+                Err(Status::not_found(format!("Task not found: {}", e)))
+            }
+        }
     }
 
     async fn list_tasks(
@@ -474,11 +560,42 @@ impl QuiltService for QuiltServiceImpl {
         
         ConsoleLogger::debug(&format!("🔍 [GRPC] List tasks request for container: {:?}", req.container_id));
         
-        // TODO: Implement task listing
-        // For now, return empty list
-        Ok(Response::new(ListTasksResponse {
-            tasks: vec![],
-        }))
+        let container_id = if req.container_id.is_empty() {
+            return Err(Status::invalid_argument("container_id is required"));
+        } else {
+            req.container_id
+        };
+        
+        match self.sync_engine.list_async_tasks(&container_id).await {
+            Ok(tasks) => {
+                use quilt::{TaskStatus, TaskInfo};
+                let task_infos: Vec<TaskInfo> = tasks.into_iter().map(|task| {
+                    let status = match task.status {
+                        sync::async_tasks::AsyncTaskStatus::Pending => TaskStatus::TaskPending,
+                        sync::async_tasks::AsyncTaskStatus::Running => TaskStatus::TaskRunning,
+                        sync::async_tasks::AsyncTaskStatus::Completed => TaskStatus::TaskCompleted,
+                        sync::async_tasks::AsyncTaskStatus::Failed => TaskStatus::TaskFailed,
+                        sync::async_tasks::AsyncTaskStatus::Cancelled => TaskStatus::TaskCancelled,
+                    };
+                    
+                    TaskInfo {
+                        task_id: task.task_id,
+                        container_id: task.container_id,
+                        command: task.command,
+                        status: status as i32,
+                        started_at: task.started_at.unwrap_or(0) as u64,
+                        completed_at: task.completed_at.unwrap_or(0) as u64,
+                    }
+                }).collect();
+                
+                ConsoleLogger::debug(&format!("📋 [GRPC] Found {} tasks for container {}", task_infos.len(), container_id));
+                Ok(Response::new(ListTasksResponse { tasks: task_infos }))
+            }
+            Err(e) => {
+                ConsoleLogger::error(&format!("❌ [GRPC] Failed to list tasks for container {}: {}", container_id, e));
+                Err(Status::internal(format!("Failed to list tasks: {}", e)))
+            }
+        }
     }
 
     async fn cancel_task(
@@ -489,12 +606,30 @@ impl QuiltService for QuiltServiceImpl {
         
         ConsoleLogger::info(&format!("🔄 [GRPC] Cancel task request for: {}", req.task_id));
         
-        // TODO: Implement task cancellation
-        // For now, return success
-        Ok(Response::new(CancelTaskResponse {
-            success: true,
-            error_message: String::new(),
-        }))
+        match self.sync_engine.cancel_async_task(&req.task_id).await {
+            Ok(was_cancelled) => {
+                if was_cancelled {
+                    ConsoleLogger::info(&format!("✅ [GRPC] Successfully cancelled task {}", req.task_id));
+                    Ok(Response::new(CancelTaskResponse {
+                        success: true,
+                        error_message: String::new(),
+                    }))
+                } else {
+                    ConsoleLogger::warning(&format!("⚠️ [GRPC] Task {} was not running or already completed", req.task_id));
+                    Ok(Response::new(CancelTaskResponse {
+                        success: false,
+                        error_message: "Task was not running or already completed".to_string(),
+                    }))
+                }
+            }
+            Err(e) => {
+                ConsoleLogger::error(&format!("❌ [GRPC] Failed to cancel task {}: {}", req.task_id, e));
+                Ok(Response::new(CancelTaskResponse {
+                    success: false,
+                    error_message: format!("Failed to cancel task: {}", e),
+                }))
+            }
+        }
     }
 
     async fn list_containers(

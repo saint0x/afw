@@ -17,6 +17,7 @@ impl SchemaManager {
         self.create_process_monitors_table().await?;
         self.create_container_logs_table().await?;
         self.create_cleanup_tasks_table().await?;
+        self.create_async_tasks_table().await?;
         self.create_indexes().await?;
         
         tracing::info!("Database schema initialized successfully");
@@ -133,6 +134,28 @@ impl SchemaManager {
         Ok(())
     }
     
+    async fn create_async_tasks_table(&self) -> SyncResult<()> {
+        sqlx::query(r#"
+            CREATE TABLE IF NOT EXISTS async_tasks (
+                task_id TEXT PRIMARY KEY,
+                container_id TEXT NOT NULL,
+                command TEXT NOT NULL, -- JSON array of command and args
+                status TEXT CHECK(status IN ('pending', 'running', 'completed', 'failed', 'cancelled')) NOT NULL,
+                created_at INTEGER NOT NULL,
+                started_at INTEGER,
+                completed_at INTEGER,
+                exit_code INTEGER,
+                stdout TEXT,
+                stderr TEXT,
+                error_message TEXT,
+                timeout_seconds INTEGER,
+                FOREIGN KEY(container_id) REFERENCES containers(id) ON DELETE CASCADE
+            )
+        "#).execute(&self.pool).await?;
+        
+        Ok(())
+    }
+    
     async fn create_indexes(&self) -> SyncResult<()> {
         // Performance indexes as specified in the documentation
         let indexes = [
@@ -146,6 +169,9 @@ impl SchemaManager {
             "CREATE INDEX IF NOT EXISTS idx_container_logs_level ON container_logs(level)",
             "CREATE INDEX IF NOT EXISTS idx_cleanup_tasks_status ON cleanup_tasks(status)",
             "CREATE INDEX IF NOT EXISTS idx_cleanup_tasks_container ON cleanup_tasks(container_id)",
+            "CREATE INDEX IF NOT EXISTS idx_async_tasks_status ON async_tasks(status)",
+            "CREATE INDEX IF NOT EXISTS idx_async_tasks_container ON async_tasks(container_id)",
+            "CREATE INDEX IF NOT EXISTS idx_async_tasks_created_at ON async_tasks(created_at)",
         ];
         
         for index_sql in indexes {
