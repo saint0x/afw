@@ -32,7 +32,7 @@ use quilt::{
     GetSystemMetricsRequest, GetSystemMetricsResponse, GetNetworkTopologyRequest, GetNetworkTopologyResponse, NetworkNode,
     GetContainerNetworkInfoRequest, GetContainerNetworkInfoResponse,
 };
-use sysinfo::{System, SystemExt};
+use sysinfo::System;
 
 #[derive(Clone)]
 pub struct QuiltServiceImpl {
@@ -391,7 +391,7 @@ impl QuiltService for QuiltServiceImpl {
 
         let state_filter = match quilt::ContainerStatus::from_i32(req.state_filter) {
             Some(quilt::ContainerStatus::Unspecified) => None,
-            Some(quilt::ContainerStatus::Pending) => Some(sync::containers::ContainerState::Pending),
+            Some(quilt::ContainerStatus::Pending) => Some(sync::containers::ContainerState::Created),
             Some(quilt::ContainerStatus::Running) => Some(sync::containers::ContainerState::Running),
             Some(quilt::ContainerStatus::Exited) => Some(sync::containers::ContainerState::Exited),
             Some(quilt::ContainerStatus::Failed) => Some(sync::containers::ContainerState::Error),
@@ -413,11 +413,11 @@ impl QuiltService for QuiltServiceImpl {
                         };
                     
                     let proto_status = match status.state {
-                        sync::containers::ContainerState::Pending => quilt::ContainerStatus::Pending,
+                        sync::containers::ContainerState::Created => quilt::ContainerStatus::Pending,
+                        sync::containers::ContainerState::Starting => quilt::ContainerStatus::Pending,
                         sync::containers::ContainerState::Running => quilt::ContainerStatus::Running,
                         sync::containers::ContainerState::Exited => quilt::ContainerStatus::Exited,
                         sync::containers::ContainerState::Error => quilt::ContainerStatus::Failed,
-                        _ => quilt::ContainerStatus::Unspecified,
                     };
 
                     containers.push(ContainerInfo {
@@ -451,7 +451,7 @@ impl QuiltService for QuiltServiceImpl {
             used_memory_bytes: sys.used_memory(),
             total_swap_bytes: sys.total_swap(),
             used_swap_bytes: sys.used_swap(),
-            cpu_usage_percent: sys.global_cpu_info().cpu_usage() as f64,
+            cpu_usage_percent: sys.global_cpu_usage() as f64,
             active_containers,
         };
 
