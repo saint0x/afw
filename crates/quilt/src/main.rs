@@ -436,11 +436,11 @@ impl QuiltService for QuiltServiceImpl {
         ).await {
             Ok(task_id) => {
                 ConsoleLogger::info(&format!("✅ [GRPC] Submitted async task {} for container {}", task_id, req.container_id));
-                Ok(Response::new(ExecContainerAsyncResponse {
-                    success: true,
-                    task_id,
-                    error_message: String::new(),
-                }))
+        Ok(Response::new(ExecContainerAsyncResponse {
+            success: true,
+            task_id,
+            error_message: String::new(),
+        }))
             }
             Err(e) => {
                 ConsoleLogger::error(&format!("❌ [GRPC] Failed to submit async task: {}", e));
@@ -463,7 +463,7 @@ impl QuiltService for QuiltServiceImpl {
         
         match self.sync_engine.get_async_task_status(&req.task_id).await {
             Ok(task) => {
-                use quilt::TaskStatus;
+        use quilt::TaskStatus;
                 let status = match task.status {
                     sync::async_tasks::AsyncTaskStatus::Pending => TaskStatus::TaskPending,
                     sync::async_tasks::AsyncTaskStatus::Running => TaskStatus::TaskRunning,
@@ -488,8 +488,8 @@ impl QuiltService for QuiltServiceImpl {
                     sync::async_tasks::AsyncTaskStatus::Cancelled => "Task was cancelled".to_string(),
                 };
                 
-                Ok(Response::new(GetTaskStatusResponse {
-                    task_id: req.task_id,
+        Ok(Response::new(GetTaskStatusResponse {
+            task_id: req.task_id,
                     status: status as i32,
                     started_at: task.started_at.unwrap_or(0) as u64,
                     completed_at: task.completed_at.unwrap_or(0) as u64,
@@ -516,7 +516,7 @@ impl QuiltService for QuiltServiceImpl {
         
         match self.sync_engine.get_async_task_status(&req.task_id).await {
             Ok(task) => {
-                use quilt::TaskStatus;
+        use quilt::TaskStatus;
                 let status = match task.status {
                     sync::async_tasks::AsyncTaskStatus::Pending => TaskStatus::TaskPending,
                     sync::async_tasks::AsyncTaskStatus::Running => TaskStatus::TaskRunning,
@@ -532,8 +532,8 @@ impl QuiltService for QuiltServiceImpl {
                     _ => 0u64,
                 };
                 
-                Ok(Response::new(GetTaskResultResponse {
-                    task_id: req.task_id,
+        Ok(Response::new(GetTaskResultResponse {
+            task_id: req.task_id,
                     status: status as i32,
                     success,
                     exit_code: task.exit_code.unwrap_or(-1) as i32,
@@ -610,10 +610,10 @@ impl QuiltService for QuiltServiceImpl {
             Ok(was_cancelled) => {
                 if was_cancelled {
                     ConsoleLogger::info(&format!("✅ [GRPC] Successfully cancelled task {}", req.task_id));
-                    Ok(Response::new(CancelTaskResponse {
-                        success: true,
-                        error_message: String::new(),
-                    }))
+        Ok(Response::new(CancelTaskResponse {
+            success: true,
+            error_message: String::new(),
+        }))
                 } else {
                     ConsoleLogger::warning(&format!("⚠️ [GRPC] Task {} was not running or already completed", req.task_id));
                     Ok(Response::new(CancelTaskResponse {

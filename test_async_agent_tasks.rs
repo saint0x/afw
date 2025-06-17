@@ -111,17 +111,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Get final results with timing
                 let result_start = Instant::now();
                 println!("🎯 Getting final task results...");
-                let result_result = Command::new("./target/debug/cli")
-                    .args(&["icc", "task-result", &task_id])
-                    .output()?;
-                
-                if result_result.status.success() {
-                    let result_output = String::from_utf8_lossy(&result_result.stdout);
-                    println!("{}", result_output);
+            let result_result = Command::new("./target/debug/cli")
+                .args(&["icc", "task-result", &task_id])
+                .output()?;
+            
+            if result_result.status.success() {
+                let result_output = String::from_utf8_lossy(&result_result.stdout);
+                println!("{}", result_output);
                     println!("⏱️ Result retrieval completed in: {:?}", result_start.elapsed());
-                } else {
-                    let error = String::from_utf8_lossy(&result_result.stderr);
-                    println!("⚠️ Task result retrieval failed: {}", error);
+            } else {
+                let error = String::from_utf8_lossy(&result_result.stderr);
+                println!("⚠️ Task result retrieval failed: {}", error);
                 }
             } else {
                 println!("⚠️ Task did not complete within timeout");
@@ -350,14 +350,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Wait a moment, then cancel
             thread::sleep(Duration::from_secs(2));
             
-            println!("🚫 Cancelling task: {}", cancel_task_id);
-            let cancel_result = Command::new("./target/debug/cli")
+        println!("🚫 Cancelling task: {}", cancel_task_id);
+        let cancel_result = Command::new("./target/debug/cli")
                 .args(&["icc", "cancel-task", &cancel_task_id])
-                .output()?;
+            .output()?;
 
-            if cancel_result.status.success() {
-                let cancel_output = String::from_utf8_lossy(&cancel_result.stdout);
-                println!("{}", cancel_output);
+        if cancel_result.status.success() {
+            let cancel_output = String::from_utf8_lossy(&cancel_result.stdout);
+            println!("{}", cancel_output);
                 
                 // Verify cancellation
                 thread::sleep(Duration::from_secs(1));
@@ -371,9 +371,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("📊 Post-cancellation status:");
                     println!("{}", verify_output);
                 }
-            } else {
-                let error = String::from_utf8_lossy(&cancel_result.stderr);
-                println!("❌ Task cancellation failed: {}", error);
+        } else {
+            let error = String::from_utf8_lossy(&cancel_result.stderr);
+            println!("❌ Task cancellation failed: {}", error);
             }
         }
     } else {
@@ -449,14 +449,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("⏱️ Phase 3 completed in: {:?}", phase3_start.elapsed());
                     
                     // Get comprehensive final results
-                    let final_result = Command::new("./target/debug/cli")
+                            let final_result = Command::new("./target/debug/cli")
                         .args(&["icc", "task-result", &task_id])
-                        .output()?;
+                                .output()?;
 
-                    if final_result.status.success() {
-                        let result_output = String::from_utf8_lossy(&final_result.stdout);
+                            if final_result.status.success() {
+                                let result_output = String::from_utf8_lossy(&final_result.stdout);
                         println!("🎯 Final workflow results:");
-                        println!("{}", result_output);
+                                println!("{}", result_output);
                     }
                 }
             }

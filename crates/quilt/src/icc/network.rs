@@ -344,7 +344,7 @@ impl NetworkManager {
     fn create_bridge_atomic(&self) -> Result<(), String> {
         ConsoleLogger::debug(&format!("Creating bridge atomically: {}", self.config.bridge_name));
         
-        // ELITE: Single compound command for complete bridge setup
+        // ELITE: Single compound command for complete bridge setup WITH INTERNET ACCESS
         let bridge_cidr = format!("{}/16", self.config.bridge_ip);
         let atomic_bridge_cmd = format!(
             "ip link add name {} type bridge && ip addr add {} dev {} && ip link set {} up",
@@ -360,6 +360,9 @@ impl NetworkManager {
             ConsoleLogger::error(&error_msg);
             return Err(error_msg);
         }
+
+        // ELITE: Configure NAT and IP forwarding for internet access
+        self.setup_internet_access()?;
         
         // ELITE: Fast verification without artificial delays
         for attempt in 1..=10 {
@@ -373,6 +376,78 @@ impl NetworkManager {
         }
         
         Err(format!("Bridge {} failed atomic creation verification", self.config.bridge_name))
+    }
+
+    // ELITE: Configure internet access through NAT masquerading  
+    fn setup_internet_access(&self) -> Result<(), String> {
+        ConsoleLogger::progress("Configuring internet access for containers...");
+        
+        // Step 1: Enable IP forwarding (essential for routing)
+        let enable_forwarding = "echo 1 > /proc/sys/net/ipv4/ip_forward";
+        ConsoleLogger::debug(&format!("Enabling IP forwarding: {}", enable_forwarding));
+        
+        let result = CommandExecutor::execute_shell(enable_forwarding)?;
+        if !result.success {
+            ConsoleLogger::warning(&format!("Failed to enable IP forwarding: {}", result.stderr));
+            // Continue anyway - might already be enabled
+        }
+
+        // Step 2: Set up NAT masquerading for outbound traffic
+        // This allows containers to access the internet through the host's network interface
+        let setup_nat_cmd = format!(
+            "iptables -t nat -C POSTROUTING -s {} ! -d {} -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s {} ! -d {} -j MASQUERADE",
+            self.config.subnet_cidr, self.config.subnet_cidr, self.config.subnet_cidr, self.config.subnet_cidr
+        );
+        
+        ConsoleLogger::debug(&format!("Setting up NAT masquerading: {}", setup_nat_cmd));
+        
+        let nat_result = CommandExecutor::execute_shell(&setup_nat_cmd)?;
+        if !nat_result.success {
+            ConsoleLogger::warning(&format!("NAT setup had issues: {}", nat_result.stderr));
+            // Continue anyway - rule might already exist
+        }
+
+        // Step 3: Allow forwarding for the bridge network
+        let setup_forward_cmd = format!(
+            "iptables -C FORWARD -i {} -o {} -j ACCEPT 2>/dev/null || iptables -A FORWARD -i {} -o {} -j ACCEPT",
+            self.config.bridge_name, self.config.bridge_name, self.config.bridge_name, self.config.bridge_name
+        );
+        
+        ConsoleLogger::debug(&format!("Setting up bridge forwarding: {}", setup_forward_cmd));
+        
+        let forward_result = CommandExecutor::execute_shell(&setup_forward_cmd)?;
+        if !forward_result.success {
+            ConsoleLogger::warning(&format!("Bridge forwarding setup had issues: {}", forward_result.stderr));
+            // Continue anyway - rule might already exist
+        }
+
+        // Step 4: Allow forwarding from bridge to external interfaces and established connections back
+        let setup_external_forward = format!(
+            "iptables -C FORWARD -i {} ! -o {} -j ACCEPT 2>/dev/null || iptables -A FORWARD -i {} ! -o {} -j ACCEPT",
+            self.config.bridge_name, self.config.bridge_name, self.config.bridge_name, self.config.bridge_name
+        );
+        
+        ConsoleLogger::debug(&format!("Setting up external forwarding: {}", setup_external_forward));
+        
+        let ext_forward_result = CommandExecutor::execute_shell(&setup_external_forward)?;
+        if !ext_forward_result.success {
+            ConsoleLogger::warning(&format!("External forwarding setup had issues: {}", ext_forward_result.stderr));
+            // Continue anyway - rule might already exist
+        }
+
+        // Step 5: Allow established and related connections back to containers
+        let setup_established = "iptables -C FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT";
+        
+        ConsoleLogger::debug(&format!("Setting up connection tracking: {}", setup_established));
+        
+        let est_result = CommandExecutor::execute_shell(setup_established)?;
+        if !est_result.success {
+            ConsoleLogger::warning(&format!("Connection tracking setup had issues: {}", est_result.stderr));
+            // Continue anyway - rule might already exist
+        }
+
+        ConsoleLogger::success(&format!("✅ Internet access configured for bridge {} (NAT + forwarding enabled)", self.config.bridge_name));
+        Ok(())
     }
     
     fn bridge_exists(&self) -> bool {

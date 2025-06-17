@@ -13,8 +13,8 @@ name = "cli"
 path = "src/cli/main.rs"
 
 [dependencies]
-tonic = { version = "0.8", features = ["transport", "codegen"] }
-prost = "0.11"
+tonic = { version = "0.11.0", features = ["transport", "codegen"] }
+prost = "0.12"
 tokio = { version = "1.21.2", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 nix = "0.26.1"
@@ -48,7 +48,7 @@ sysinfo = "0.35.2"
 tempfile = "3.8"
 
 [build-dependencies]
-tonic-build = { version = "0.8", features = ["transport"] }
+tonic-build = { version = "0.11.0", features = ["transport"] }
 
 # Added to reduce debug symbols for dev builds to help with OOM linker errors
 [profile.dev]

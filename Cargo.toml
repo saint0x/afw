@@ -79,6 +79,7 @@ pkg_store = { path = "crates/pkg_store" }
 hostfx = { path = "crates/hostfx" }
 telemetry = { path = "crates/telemetry" }
 crypto = { path = "crates/crypto" }
+quilt = { path = "crates/quilt" }
 
 tonic = { version = "0.11.0", features = ["transport"] }
 
@@ -109,6 +110,10 @@ path = "script6.rs"
 [[bin]]
 name = "agent-container-test"
 path = "script7.rs"
+
+[[bin]]
+name = "test-foreign-key-fix"
+path = "test_foreign_key_fix.rs"
 
 [[bin]]
 name = "debug-container"

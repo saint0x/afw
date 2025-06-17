@@ -11,6 +11,7 @@ use crate::sync::{
     async_tasks::{AsyncTaskManager, AsyncTask, AsyncTaskStatus},
     error::{SyncError, SyncResult},
 };
+use std::collections::HashSet;
 
 /// Main sync engine that coordinates all stateful resources
 pub struct SyncEngine {
@@ -121,21 +122,103 @@ impl SyncEngine {
     
     /// Create a new container with coordinated network allocation
     pub async fn create_container(&self, config: ContainerConfig) -> SyncResult<NetworkConfig> {
-        // 1. Allocate network resources if networking is enabled
+        let container_id = config.id.clone();
+        
+        // Use explicit transaction to ensure container is committed before network allocation
+        let mut tx = self.pool().begin().await?;
+        
+        // 1. Create container record in database FIRST to satisfy foreign key constraints
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs() as i64;
+        let environment_json = serde_json::to_string(&config.environment)?;
+        
+        sqlx::query(r#"
+            INSERT INTO containers (
+                id, name, image_path, command, environment, state,
+                memory_limit_mb, cpu_limit_percent,
+                enable_network_namespace, enable_pid_namespace, enable_mount_namespace,
+                enable_uts_namespace, enable_ipc_namespace,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "#)
+        .bind(&config.id)
+        .bind(&config.name)
+        .bind(&config.image_path)
+        .bind(&config.command)
+        .bind(&environment_json)
+        .bind("created")
+        .bind(config.memory_limit_mb)
+        .bind(config.cpu_limit_percent)
+        .bind(config.enable_network_namespace)
+        .bind(config.enable_pid_namespace)
+        .bind(config.enable_mount_namespace)
+        .bind(config.enable_uts_namespace)
+        .bind(config.enable_ipc_namespace)
+        .bind(now)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+
+        // 2. Allocate network resources if networking is enabled
         let network_config = if config.enable_network_namespace {
-            Some(self.network_manager.allocate_network(&config.id).await?)
+            // Find available IP
+            let allocated_ips: Vec<(String,)> = sqlx::query_as(
+                "SELECT ip_address FROM network_allocations WHERE status != 'cleaned'"
+            ).fetch_all(&mut *tx).await?;
+            
+            let allocated_set: std::collections::HashSet<String> = allocated_ips
+                .into_iter()
+                .map(|(ip,)| ip)
+                .collect();
+            
+            // Find first available IP in range (172.16.0.10 to 172.16.0.250)
+            let start_int = u32::from(std::net::Ipv4Addr::new(172, 16, 0, 10));
+            let end_int = u32::from(std::net::Ipv4Addr::new(172, 16, 0, 250));
+            
+            let mut available_ip = None;
+            for ip_int in start_int..=end_int {
+                let ip = std::net::Ipv4Addr::from(ip_int);
+                let ip_str = ip.to_string();
+                
+                if !allocated_set.contains(&ip_str) {
+                    available_ip = Some(ip_str);
+                    break;
+                }
+            }
+            
+            let ip = available_ip.ok_or_else(|| SyncError::NoAvailableIp)?;
+            
+            // Insert network allocation within same transaction
+            sqlx::query(r#"
+                INSERT INTO network_allocations (
+                    container_id, ip_address, allocation_time, setup_completed, status
+                ) VALUES (?, ?, ?, ?, ?)
+            "#)
+            .bind(&container_id)
+            .bind(&ip)
+            .bind(now)
+            .bind(false)
+            .bind("allocated")
+            .execute(&mut *tx)
+            .await?;
+            
+            Some(NetworkConfig {
+                container_id: container_id.clone(),
+                ip_address: ip,
+                bridge_interface: None,
+                veth_host: None,
+                veth_container: None,
+                setup_required: true,
+            })
         } else {
-            self.network_manager.mark_network_disabled(&config.id).await?;
             None
         };
         
-        // Store container ID before moving config
-        let container_id = config.id.clone();
+        // 3. Commit transaction to ensure atomicity
+        tx.commit().await?;
         
-        // 2. Create container record in database
-        self.container_manager.create_container(config).await?;
+        tracing::info!("Created container {} in database with network config", config.id);
         
-        // 3. Return network configuration for setup
+        // 4. Return network configuration for setup
         Ok(network_config.unwrap_or(NetworkConfig {
             container_id,
             ip_address: String::new(),
