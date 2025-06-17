@@ -29,6 +29,8 @@ path = "../../database_demo.rs"
 tokio = { version = "1.0", features = ["full"] }
 async-trait = "0.1"
 futures = "0.3"
+futures-util = "0.3"
+async-stream = "0.3"
 bytes = "1"
 
 # Serialization

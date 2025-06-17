@@ -17,6 +17,8 @@ use crate::engines::tool_registry::ToolRegistry;
 use crate::engines::system_prompt::SystemPromptService;
 use crate::engines::container::quilt::QuiltService;
 use crate::engines::icc::ICCEngine;
+use crate::engines::observability::ObservabilityManager;
+use crate::engines::streaming::{StreamingService, StreamingConfig};
 use crate::database::{DatabaseManager, DatabaseConfig};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -34,6 +36,11 @@ pub mod system_prompt;
 pub mod container;
 pub mod config;
 pub mod icc;
+pub mod context;
+pub mod orchestrator;
+pub mod observability;
+pub mod observability_endpoints;
+pub mod streaming;
 
 /// Main orchestrator for all Aria runtime engines
 pub struct AriaEngines {
@@ -48,39 +55,173 @@ pub struct AriaEngines {
     pub quilt_service: Arc<Mutex<QuiltService>>,
     pub icc_engine: Arc<ICCEngine>,
     pub database: Arc<DatabaseManager>,
+    pub observability: Arc<ObservabilityManager>,
+    pub streaming: Arc<StreamingService>,
 }
 
 impl AriaEngines {
     /// Initialize all engines
-    pub fn initialize_all(&self) -> bool {
+    pub async fn initialize_all(&self) -> AriaResult<()> {
         // Initialize engines in dependency order
-        self.execution.initialize() &&
-        self.planning.initialize() &&
-        self.conversation.initialize() &&
-        self.reflection.initialize() &&
-        self.context_manager.initialize() &&
-        self.icc_engine.initialize()
+        // First initialize core services
+        self.observability.start().await?;
+        self.streaming.start().await?;
+        
+        // Then initialize other engines
+        if !self.execution.initialize() {
+            return Err(crate::errors::AriaError::new(
+                crate::errors::ErrorCode::EngineInitializationFailed,
+                crate::errors::ErrorCategory::Engine,
+                crate::errors::ErrorSeverity::High,
+                "Failed to initialize execution engine"
+            ));
+        }
+        
+        if !self.planning.initialize() {
+            return Err(crate::errors::AriaError::new(
+                crate::errors::ErrorCode::EngineInitializationFailed,
+                crate::errors::ErrorCategory::Engine,
+                crate::errors::ErrorSeverity::High,
+                "Failed to initialize planning engine"
+            ));
+        }
+        
+        if !self.conversation.initialize() {
+            return Err(crate::errors::AriaError::new(
+                crate::errors::ErrorCode::EngineInitializationFailed,
+                crate::errors::ErrorCategory::Engine,
+                crate::errors::ErrorSeverity::High,
+                "Failed to initialize conversation engine"
+            ));
+        }
+        
+        if !self.reflection.initialize() {
+            return Err(crate::errors::AriaError::new(
+                crate::errors::ErrorCode::EngineInitializationFailed,
+                crate::errors::ErrorCategory::Engine,
+                crate::errors::ErrorSeverity::High,
+                "Failed to initialize reflection engine"
+            ));
+        }
+        
+        if !self.context_manager.initialize() {
+            return Err(crate::errors::AriaError::new(
+                crate::errors::ErrorCode::EngineInitializationFailed,
+                crate::errors::ErrorCategory::Engine,
+                crate::errors::ErrorSeverity::High,
+                "Failed to initialize context manager"
+            ));
+        }
+        
+        if !self.icc_engine.initialize() {
+            return Err(crate::errors::AriaError::new(
+                crate::errors::ErrorCode::EngineInitializationFailed,
+                crate::errors::ErrorCategory::Engine,
+                crate::errors::ErrorSeverity::High,
+                "Failed to initialize ICC engine"
+            ));
+        }
+        
+        Ok(())
     }
 
     /// Shutdown all engines gracefully
-    pub fn shutdown_all(&self) -> bool {
+    pub async fn shutdown_all(&self) -> AriaResult<()> {
         // Shutdown engines in reverse dependency order
-        self.icc_engine.shutdown() &&
-        self.context_manager.shutdown() &&
-        self.reflection.shutdown() &&
-        self.conversation.shutdown() &&
-        self.planning.shutdown() &&
-        self.execution.shutdown()
+        let mut shutdown_errors = Vec::new();
+        
+        if !self.icc_engine.shutdown() {
+            shutdown_errors.push("ICC engine shutdown failed");
+        }
+        
+        if !self.context_manager.shutdown() {
+            shutdown_errors.push("Context manager shutdown failed");
+        }
+        
+        if !self.reflection.shutdown() {
+            shutdown_errors.push("Reflection engine shutdown failed");
+        }
+        
+        if !self.conversation.shutdown() {
+            shutdown_errors.push("Conversation engine shutdown failed");
+        }
+        
+        if !self.planning.shutdown() {
+            shutdown_errors.push("Planning engine shutdown failed");
+        }
+        
+        if !self.execution.shutdown() {
+            shutdown_errors.push("Execution engine shutdown failed");
+        }
+        
+        // Shutdown observability and streaming services last
+        if let Err(e) = self.streaming.stop().await {
+            shutdown_errors.push("Streaming service shutdown failed");
+        }
+        
+        if let Err(e) = self.observability.stop().await {
+            shutdown_errors.push("Observability service shutdown failed");
+        }
+        
+        if !shutdown_errors.is_empty() {
+            return Err(crate::errors::AriaError::new(
+                crate::errors::ErrorCode::EngineShutdownFailed,
+                crate::errors::ErrorCategory::Engine,
+                crate::errors::ErrorSeverity::Medium,
+                &format!("Some engines failed to shutdown: {}", shutdown_errors.join(", "))
+            ));
+        }
+        
+        Ok(())
     }
 
     /// Health check for all engines
-    pub fn health_check_all(&self) -> bool {
-        self.execution.health_check() &&
-        self.planning.health_check() &&
-        self.conversation.health_check() &&
-        self.reflection.health_check() &&
-        self.context_manager.health_check() &&
-        self.icc_engine.health_check()
+    pub async fn health_check_all(&self) -> AriaResult<crate::engines::observability::HealthStatus> {
+        let health_status = self.observability.get_health().await;
+        
+        // Perform basic checks on other engines
+        let all_healthy = self.execution.health_check() &&
+            self.planning.health_check() &&
+            self.conversation.health_check() &&
+            self.reflection.health_check() &&
+            self.context_manager.health_check() &&
+            self.icc_engine.health_check();
+        
+        if all_healthy {
+            Ok(health_status)
+        } else {
+            Err(crate::errors::AriaError::new(
+                crate::errors::ErrorCode::HealthCheckFailed,
+                crate::errors::ErrorCategory::Engine,
+                crate::errors::ErrorSeverity::Medium,
+                "One or more engines failed health check"
+            ))
+        }
+    }
+    
+    /// Get runtime metrics
+    pub async fn get_metrics(&self) -> crate::engines::observability::RuntimeMetrics {
+        self.observability.get_metrics().await
+    }
+    
+    /// Record an error for observability
+    pub async fn record_error(&self, error: &crate::errors::AriaError, component: &str, context: HashMap<String, String>) -> AriaResult<()> {
+        self.observability.record_error(error, component, context).await
+    }
+    
+    /// Record a tool execution for observability
+    pub async fn record_tool_execution(&self, tool_name: &str, session_id: &str, duration_ms: u64, success: bool, error: Option<String>) -> AriaResult<()> {
+        self.observability.record_tool_execution(tool_name, session_id, duration_ms, success, error).await
+    }
+    
+    /// Record a container event for observability
+    pub async fn record_container_event(&self, container_id: &str, event_type: &str, metadata: HashMap<String, String>) -> AriaResult<()> {
+        self.observability.record_container_event(container_id, event_type, metadata).await
+    }
+    
+    /// Record an agent execution for observability
+    pub async fn record_agent_execution(&self, session_id: &str, agent_name: &str, step_count: u32, tokens_used: u32, duration_ms: u64, success: bool) -> AriaResult<()> {
+        self.observability.record_agent_execution(session_id, agent_name, step_count, tokens_used, duration_ms, success).await
     }
 }
 
@@ -391,5 +532,16 @@ pub trait ICCAgentHandler: Send + Sync {
         session_id: Uuid,
     ) -> AriaResult<String>;
 }
+
+// Re-export main types
+pub use execution::ExecutionEngine;
+pub use planning::PlanningEngine;
+pub use reflection::ReflectionEngine;
+pub use conversation::ConversationEngine;
+pub use context::ContextEngine;
+pub use llm::LLMEngine;
+pub use orchestrator::AriaEngines;
+pub use observability::{ObservabilityManager, ObservabilityEvent, RuntimeMetrics, HealthStatus};
+pub use streaming::{StreamingService, StreamingConfig, StreamType};
 
  
