@@ -61,6 +61,28 @@ pub enum ObservabilityEvent {
         duration_ms: u64,
         success: bool,
     },
+    /// Intelligence update event
+    IntelligenceUpdate {
+        timestamp: u64,
+        pattern_id: Option<String>,
+        confidence_delta: f64,
+        learning_context: serde_json::Value,
+    },
+    /// Pattern match event
+    PatternMatch {
+        timestamp: u64,
+        pattern_id: String,
+        confidence: f64,
+        request: String,
+        session_id: String,
+    },
+    /// Context tree update event
+    ContextTreeUpdate {
+        timestamp: u64,
+        session_id: String,
+        node_count: usize,
+        depth: usize,
+    },
 }
 
 /// Runtime metrics structure
@@ -515,7 +537,7 @@ impl ObservabilityManager {
     }
 
     /// Emit an event to all subscribers
-    async fn emit_event(&self, event: ObservabilityEvent) -> Result<(), AriaError> {
+    pub async fn emit_event(&self, event: ObservabilityEvent) -> Result<(), AriaError> {
         // Broadcast to main channel (ignore "no receivers" errors)
         if let Err(e) = self.event_broadcaster.send(event.clone()) {
             // Only warn if there should be receivers but the send still failed
@@ -551,6 +573,9 @@ impl ObservabilityManager {
                 ObservabilityEvent::ToolExecution { .. } => "tool",
                 ObservabilityEvent::ContainerEvent { .. } => "container",
                 ObservabilityEvent::AgentExecution { .. } => "agent",
+                ObservabilityEvent::IntelligenceUpdate { .. } => "intelligence",
+                ObservabilityEvent::PatternMatch { .. } => "pattern", 
+                ObservabilityEvent::ContextTreeUpdate { .. } => "context",
             };
             
             if !event_types.contains(&event_type.to_string()) {

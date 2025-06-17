@@ -173,4 +173,16 @@ impl AriaError {
     pub fn is_timeout(&self) -> bool {
         matches!(self.code, ErrorCode::Timeout)
     }
+}
+
+// Conversion from serde_json::Error
+impl From<serde_json::Error> for AriaError {
+    fn from(err: serde_json::Error) -> Self {
+        AriaError::new(
+            ErrorCode::SerializationError,
+            ErrorCategory::System,
+            ErrorSeverity::Medium,
+            &format!("JSON serialization error: {}", err),
+        )
+    }
 } 

@@ -17,6 +17,9 @@ use crate::engines::tool_registry::ToolRegistry;
 use crate::engines::system_prompt::SystemPromptService;
 use crate::engines::container::quilt::QuiltService;
 use crate::engines::icc::ICCEngine;
+use crate::engines::intelligence::{IntelligenceEngine, IntelligenceConfig};
+use crate::engines::observability::ObservabilityManager;
+use crate::engines::streaming::StreamingService;
 
 use crate::database::{DatabaseManager, DatabaseConfig};
 use std::collections::HashMap;
@@ -39,6 +42,7 @@ pub mod context;
 pub mod observability;
 pub mod observability_endpoints;
 pub mod streaming;
+pub mod intelligence;
 
 /// Main orchestrator for all Aria runtime engines
 pub struct AriaEngines {
@@ -55,6 +59,7 @@ pub struct AriaEngines {
     pub database: Arc<DatabaseManager>,
     pub observability: Arc<ObservabilityManager>,
     pub streaming: Arc<StreamingService>,
+    pub intelligence: Arc<IntelligenceEngine>,
 }
 
 impl AriaEngines {
@@ -120,6 +125,15 @@ impl AriaEngines {
             ));
         }
         
+        if !self.intelligence.initialize() {
+            return Err(crate::errors::AriaError::new(
+                crate::errors::ErrorCode::EngineInitializationFailed,
+                crate::errors::ErrorCategory::Engine,
+                crate::errors::ErrorSeverity::High,
+                "Failed to initialize intelligence engine"
+            ));
+        }
+        
         Ok(())
     }
 
@@ -130,6 +144,10 @@ impl AriaEngines {
         
         if !self.icc_engine.shutdown() {
             shutdown_errors.push("ICC engine shutdown failed");
+        }
+        
+        if !self.intelligence.shutdown() {
+            shutdown_errors.push("Intelligence engine shutdown failed");
         }
         
         if !self.context_manager.shutdown() {
@@ -183,7 +201,8 @@ impl AriaEngines {
             self.conversation.health_check() &&
             self.reflection.health_check() &&
             self.context_manager.health_check() &&
-            self.icc_engine.health_check();
+            self.icc_engine.health_check() &&
+            self.intelligence.health_check();
         
         if all_healthy {
             Ok(health_status)
@@ -220,6 +239,67 @@ impl AriaEngines {
     /// Record an agent execution for observability
     pub async fn record_agent_execution(&self, session_id: &str, agent_name: &str, step_count: u32, tokens_used: u32, duration_ms: u64, success: bool) -> AriaResult<()> {
         self.observability.record_agent_execution(session_id, agent_name, step_count, tokens_used, duration_ms, success).await
+    }
+
+    /// Get intelligent container configuration
+    pub async fn get_intelligent_container_config(&self, request: &str, session_id: &str) -> AriaResult<crate::engines::intelligence::ContainerConfig> {
+        use crate::engines::intelligence::{ContainerRequest, RecommendationAction, generate_id};
+        
+        let container_request = ContainerRequest {
+            request_id: generate_id(),
+            session_id: session_id.to_string(),
+            description: request.to_string(),
+            requirements: None,
+            context_hints: Vec::new(),
+        };
+
+        let intelligence_result = self.intelligence.manager().analyze_container_request(&container_request).await?;
+
+        match intelligence_result.recommendation.action {
+            RecommendationAction::UsePattern => {
+                Ok(intelligence_result.pattern_match.unwrap().container_config)
+            },
+            RecommendationAction::CreateNew => {
+                self.create_new_container_config(request).await
+            },
+            RecommendationAction::OptimizeExisting => {
+                self.optimize_container_config(request, &intelligence_result.context_summary).await
+            },
+            RecommendationAction::RequestMoreInfo => {
+                // Fall back to new config creation
+                self.create_new_container_config(request).await
+            },
+        }
+    }
+
+    /// Create a new container configuration (Phase 1 implementation)
+    async fn create_new_container_config(&self, request: &str) -> AriaResult<crate::engines::intelligence::ContainerConfig> {
+        use crate::engines::intelligence::ContainerConfig;
+        use std::collections::HashMap;
+        
+        // Phase 1 implementation - basic container config creation
+        // Will be enhanced with more intelligent analysis in later phases
+        
+        let config = ContainerConfig {
+            image: "ubuntu:22.04".to_string(), // Default to Ubuntu for Phase 1
+            command: vec!["/bin/bash".to_string()],
+            environment: HashMap::new(),
+            working_directory: Some("/workspace".to_string()),
+            resource_limits: None, // Will use system defaults
+            network_config: None,
+            volumes: Vec::new(),
+        };
+
+        tracing::info!("Created new container config for request: {}", request);
+        Ok(config)
+    }
+
+    /// Optimize existing container configuration (Phase 1 implementation)
+    async fn optimize_container_config(&self, request: &str, context_summary: &str) -> AriaResult<crate::engines::intelligence::ContainerConfig> {
+        // Phase 1 implementation - basic optimization
+        // Full optimization will be implemented in later phases
+        tracing::debug!("Optimizing container config with context: {}", context_summary);
+        self.create_new_container_config(request).await
     }
 }
 
@@ -532,7 +612,7 @@ pub trait ICCAgentHandler: Send + Sync {
 }
 
 // Re-export observability types
-pub use observability::{ObservabilityManager, ObservabilityEvent, RuntimeMetrics, HealthStatus};
-pub use streaming::{StreamingService, StreamingConfig, StreamType};
+pub use observability::{RuntimeMetrics, HealthStatus};
+pub use streaming::{StreamingConfig, StreamType};
 
  

@@ -509,6 +509,31 @@ fn convert_to_sse_event(event: ObservabilityEvent) -> SseEvent {
             });
             ("agent", agent_data, *timestamp)
         },
+        ObservabilityEvent::IntelligenceUpdate { timestamp, pattern_id, confidence_delta, learning_context } => {
+            let intelligence_data = serde_json::json!({
+                "pattern_id": pattern_id,
+                "confidence_delta": confidence_delta,
+                "learning_context": learning_context
+            });
+            ("intelligence", intelligence_data, *timestamp)
+        },
+        ObservabilityEvent::PatternMatch { timestamp, pattern_id, confidence, request, session_id } => {
+            let pattern_data = serde_json::json!({
+                "pattern_id": pattern_id,
+                "confidence": confidence,
+                "request": request,
+                "session_id": session_id
+            });
+            ("pattern", pattern_data, *timestamp)
+        },
+        ObservabilityEvent::ContextTreeUpdate { timestamp, session_id, node_count, depth } => {
+            let context_data = serde_json::json!({
+                "session_id": session_id,
+                "node_count": node_count,
+                "depth": depth
+            });
+            ("context", context_data, *timestamp)
+        },
     };
 
     SseEvent {

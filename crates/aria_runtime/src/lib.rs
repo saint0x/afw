@@ -149,7 +149,14 @@ impl AriaEngines {
             engines::streaming::StreamingConfig::default()
         ));
 
-        // 6. Assemble the final struct
+        // 6. Intelligence Engine
+        let intelligence = Arc::new(engines::intelligence::IntelligenceEngine::new(
+            database_manager.clone(),
+            observability.clone(),
+            engines::intelligence::IntelligenceConfig::default()
+        ));
+
+        // 7. Assemble the final struct
         Self {
             execution,
             planning,
@@ -164,6 +171,7 @@ impl AriaEngines {
             database: database_manager,
             observability,
             streaming,
+            intelligence,
         }
     }
 }

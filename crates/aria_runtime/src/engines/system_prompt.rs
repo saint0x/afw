@@ -312,16 +312,20 @@ mod tests {
             system_prompt: None,
             agent_type: Some("default".to_string()),
             tools: vec!["webSearchTool".to_string()],
+            agents: vec![],
             directives: Some("Be helpful and accurate".to_string()),
             capabilities: vec!["search".to_string(), "analysis".to_string()],
             memory_enabled: Some(true),
+            max_iterations: Some(10),
+            timeout_ms: Some(30000),
+            memory_limit: Some(1024 * 1024), // 1MB
             llm: LLMConfig {
+                provider: "openai".to_string(),
                 model: "gpt-4".to_string(),
+                api_key: None,
                 temperature: Some(0.7),
                 max_tokens: Some(2000),
-                top_p: None,
-                stop_sequences: None,
-                stream: false,
+                timeout: None,
             },
         };
 
@@ -343,16 +347,20 @@ mod tests {
             system_prompt: None,
             agent_type: Some("default".to_string()),
             tools: vec!["tool1".to_string(), "tool2".to_string()],
+            agents: vec![],
             directives: None,
             capabilities: vec![],
             memory_enabled: None,
+            max_iterations: Some(10),
+            timeout_ms: Some(30000),
+            memory_limit: Some(1024 * 1024), // 1MB
             llm: LLMConfig {
+                provider: "openai".to_string(),
                 model: "gpt-4".to_string(),
+                api_key: None,
                 temperature: Some(0.7),
                 max_tokens: Some(2000),
-                top_p: None,
-                stop_sequences: None,
-                stream: false,
+                timeout: None,
             },
         };
 
