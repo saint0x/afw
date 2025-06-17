@@ -24,6 +24,14 @@ path = "../../icc_demo.rs"
 name = "database-demo"
 path = "../../database_demo.rs"
 
+[[bin]]
+name = "observability-streaming-demo"
+path = "../../observability_streaming_demo.rs"
+
+[[bin]]
+name = "simple-observability-test"
+path = "../../simple_observability_test.rs"
+
 [dependencies]
 # Async runtime
 tokio = { version = "1.0", features = ["full"] }
@@ -68,7 +76,7 @@ tower-http = { version = "0.5", features = ["cors", "trace"] }
 anyhow = { workspace = true }
 
 # Stream support
-tokio-stream = "0.1"
+tokio-stream = { version = "0.1", features = ["sync"] }
 
 # Regex for parameter resolution
 regex = "1.10"

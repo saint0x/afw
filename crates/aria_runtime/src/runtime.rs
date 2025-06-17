@@ -107,12 +107,12 @@ impl AriaRuntime {
         *self.status.write().await = RuntimeStatus::Initializing;
         
         // Initialize all engines
-        if !self.engines.initialize_all() {
+        if let Err(e) = self.engines.initialize_all().await {
             return Err(AriaError::new(
                 ErrorCode::SystemNotReady,
                 ErrorCategory::System,
                 ErrorSeverity::Critical,
-                "Failed to initialize engines",
+                &format!("Failed to initialize engines: {}", e),
             ));
         }
 
@@ -625,12 +625,12 @@ impl AriaRuntime {
         *self.status.write().await = RuntimeStatus::Shutdown;
         
         // Shutdown all engines
-        if !self.engines.shutdown_all() {
+        if let Err(e) = self.engines.shutdown_all().await {
             return Err(AriaError::new(
                 ErrorCode::SystemNotReady,
                 ErrorCategory::System,
                 ErrorSeverity::Critical,
-                "Failed to shutdown engines",
+                &format!("Failed to shutdown engines: {}", e),
             ));
         }
         
@@ -652,7 +652,10 @@ impl AriaRuntime {
 
     /// Health check
     pub async fn health_check(&self) -> AriaResult<std::collections::HashMap<String, bool>> {
-        let overall_health = self.engines.health_check_all();
+        let overall_health = match self.engines.health_check_all().await {
+            Ok(_) => true,
+            Err(_) => false,
+        };
         let mut health_map = std::collections::HashMap::new();
         health_map.insert("overall".to_string(), overall_health);
         

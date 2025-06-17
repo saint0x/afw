@@ -17,8 +17,7 @@ use crate::engines::tool_registry::ToolRegistry;
 use crate::engines::system_prompt::SystemPromptService;
 use crate::engines::container::quilt::QuiltService;
 use crate::engines::icc::ICCEngine;
-use crate::engines::observability::ObservabilityManager;
-use crate::engines::streaming::{StreamingService, StreamingConfig};
+
 use crate::database::{DatabaseManager, DatabaseConfig};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -37,7 +36,6 @@ pub mod container;
 pub mod config;
 pub mod icc;
 pub mod context;
-pub mod orchestrator;
 pub mod observability;
 pub mod observability_endpoints;
 pub mod streaming;
@@ -533,14 +531,7 @@ pub trait ICCAgentHandler: Send + Sync {
     ) -> AriaResult<String>;
 }
 
-// Re-export main types
-pub use execution::ExecutionEngine;
-pub use planning::PlanningEngine;
-pub use reflection::ReflectionEngine;
-pub use conversation::ConversationEngine;
-pub use context::ContextEngine;
-pub use llm::LLMEngine;
-pub use orchestrator::AriaEngines;
+// Re-export observability types
 pub use observability::{ObservabilityManager, ObservabilityEvent, RuntimeMetrics, HealthStatus};
 pub use streaming::{StreamingService, StreamingConfig, StreamType};
 

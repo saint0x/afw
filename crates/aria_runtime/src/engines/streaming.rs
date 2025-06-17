@@ -1,5 +1,5 @@
 use crate::engines::observability::{ObservabilityEvent, EventFilter, ObservabilityManager};
-use crate::error::AriaError;
+use crate::errors::AriaError;
 use axum::{
     extract::{Query, State},
     http::{header, StatusCode},
@@ -192,7 +192,12 @@ impl StreamingService {
         // Check concurrent stream limit
         let active_count = self.active_streams.read().await.len();
         if active_count >= self.config.max_concurrent_streams {
-            return Err(AriaError::Engine("Too many concurrent streams".to_string()));
+            return Err(AriaError::new(
+                crate::errors::ErrorCode::SystemNotReady,
+                crate::errors::ErrorCategory::System,
+                crate::errors::ErrorSeverity::Medium,
+                "Too many concurrent streams"
+            ));
         }
 
         // Parse stream configuration
@@ -216,7 +221,7 @@ impl StreamingService {
         // Register active stream
         let active_stream = ActiveStream {
             id: stream_id.clone(),
-            config: stream_config,
+            config: stream_config.clone(),
             created_at: std::time::Instant::now(),
             events_sent: 0,
             last_activity: std::time::Instant::now(),
@@ -285,7 +290,8 @@ impl StreamingService {
                                 let sse_event = convert_to_sse_event(event);
                                 
                                 // Update stream activity
-                                if let Ok(mut streams) = active_streams.write().await {
+                                {
+                                    let mut streams = active_streams.write().await;
                                     if let Some(stream_info) = streams.get_mut(&stream_id) {
                                         stream_info.events_sent += 1;
                                         stream_info.last_activity = std::time::Instant::now();
@@ -293,7 +299,8 @@ impl StreamingService {
                                 }
                                 
                                 // Update statistics
-                                if let Ok(mut stream_stats) = stats.write().await {
+                                {
+                                    let mut stream_stats = stats.write().await;
                                     stream_stats.events_sent += 1;
                                 }
                                 
@@ -307,7 +314,8 @@ impl StreamingService {
                                 warn!("Stream {} lagged, skipped {} events", stream_id, skipped);
                                 
                                 // Update statistics
-                                if let Ok(mut stream_stats) = stats.write().await {
+                                {
+                                    let mut stream_stats = stats.write().await;
                                     stream_stats.events_dropped += skipped;
                                 }
                                 
@@ -334,7 +342,8 @@ impl StreamingService {
             
             // Cleanup on stream end
             let _ = active_streams.write().await.remove(&stream_id);
-            if let Ok(mut stream_stats) = stats.write().await {
+            {
+                let mut stream_stats = stats.write().await;
                 stream_stats.active_streams = stream_stats.active_streams.saturating_sub(1);
             }
         };
@@ -354,7 +363,12 @@ impl StreamingService {
             Some("containers") => Ok(StreamType::Containers),
             Some("agents") => Ok(StreamType::Agents),
             Some("custom") => Ok(StreamType::Custom),
-            Some(other) => Err(AriaError::Engine(format!("Unknown stream type: {}", other))),
+            Some(other) => Err(AriaError::new(
+                crate::errors::ErrorCode::NotSupported,
+                crate::errors::ErrorCategory::System,
+                crate::errors::ErrorSeverity::Low,
+                &format!("Unknown stream type: {}", other)
+            )),
         }
     }
 
@@ -411,7 +425,8 @@ impl StreamingService {
                     debug!("Cleaned up {} expired streams", removed_count);
                     
                     // Update statistics
-                    if let Ok(mut stream_stats) = stats.write().await {
+                    {
+                        let mut stream_stats = stats.write().await;
                         stream_stats.active_streams = streams.len() as u32;
                     }
                 }
@@ -433,7 +448,8 @@ impl StreamingService {
                 
                 // Calculate average latency and other metrics
                 // This is a simplified implementation
-                if let Ok(mut stream_stats) = stats.write().await {
+                {
+                    let mut stream_stats = stats.write().await;
                     stream_stats.avg_latency_ms = 5.0; // Placeholder
                 }
             }

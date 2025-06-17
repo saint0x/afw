@@ -1,5 +1,5 @@
 use crate::database::DatabaseManager;
-use crate::error::AriaError;
+use crate::errors::{AriaError, ErrorSeverity as AriaErrorSeverity};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -173,6 +173,17 @@ pub enum ErrorSeverity {
     Critical,
 }
 
+impl From<AriaErrorSeverity> for ErrorSeverity {
+    fn from(severity: AriaErrorSeverity) -> Self {
+        match severity {
+            AriaErrorSeverity::Low => ErrorSeverity::Low,
+            AriaErrorSeverity::Medium => ErrorSeverity::Medium,
+            AriaErrorSeverity::High => ErrorSeverity::High,
+            AriaErrorSeverity::Critical => ErrorSeverity::Critical,
+        }
+    }
+}
+
 /// Event stream subscriber for SSE clients
 #[derive(Debug)]
 pub struct EventSubscriber {
@@ -182,7 +193,7 @@ pub struct EventSubscriber {
 }
 
 /// Filter for observability events
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventFilter {
     pub event_types: Option<Vec<String>>,
     pub components: Option<Vec<String>>,
@@ -448,12 +459,7 @@ impl ObservabilityManager {
             error_type: format!("{:?}", error),
             message: error.to_string(),
             context,
-            severity: match error {
-                AriaError::Critical(_) => ErrorSeverity::Critical,
-                AriaError::Engine(_) => ErrorSeverity::High,
-                AriaError::Tool(_) => ErrorSeverity::Medium,
-                _ => ErrorSeverity::Low,
-            },
+            severity: error.severity.clone().into(),
             component: component.to_string(),
             stack_trace: Some(format!("{:?}", error)),
         };
@@ -485,7 +491,7 @@ impl ObservabilityManager {
         };
 
         let mut subscribers = self.subscribers.write().await;
-        subscribers.insert(subscriber_id, subscriber);
+        subscribers.insert(subscriber_id.clone(), subscriber);
 
         debug!("New event subscriber added: {}", subscriber_id);
         Ok(receiver)
@@ -510,9 +516,14 @@ impl ObservabilityManager {
 
     /// Emit an event to all subscribers
     async fn emit_event(&self, event: ObservabilityEvent) -> Result<(), AriaError> {
-        // Broadcast to main channel
+        // Broadcast to main channel (ignore "no receivers" errors)
         if let Err(e) = self.event_broadcaster.send(event.clone()) {
-            warn!("Failed to broadcast event: {}", e);
+            // Only warn if there should be receivers but the send still failed
+            if self.event_broadcaster.receiver_count() > 0 {
+                warn!("Failed to broadcast event with active receivers: {}", e);
+            } else {
+                debug!("No active receivers for event broadcast (this is normal)");
+            }
         }
 
         // Send to filtered subscribers
@@ -615,7 +626,10 @@ impl ObservabilityManager {
                 
                 // Emit metrics event
                 if let Err(e) = event_broadcaster.send(metrics_event) {
-                    debug!("Failed to send metrics event: {}", e);
+                    if event_broadcaster.receiver_count() > 0 {
+                        debug!("Failed to send metrics event with active receivers: {}", e);
+                    }
+                    // Silently ignore if no receivers
                 }
             }
         });
@@ -666,7 +680,10 @@ impl ObservabilityManager {
                 
                 // Emit health event
                 if let Err(e) = event_broadcaster.send(health_event) {
-                    debug!("Failed to send health event: {}", e);
+                    if event_broadcaster.receiver_count() > 0 {
+                        debug!("Failed to send health event with active receivers: {}", e);
+                    }
+                    // Silently ignore if no receivers
                 }
             }
         });
@@ -693,7 +710,7 @@ impl ObservabilityManager {
                 
                 // Clean up inactive subscribers
                 let mut subs = subscribers.write().await;
-                subs.retain(|_, subscriber| !subscriber.sender.is_closed());
+                subs.retain(|_, subscriber| subscriber.sender.receiver_count() > 0);
                 
                 debug!("Cleanup completed: {} active subscribers", subs.len());
             }

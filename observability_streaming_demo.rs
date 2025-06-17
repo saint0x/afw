@@ -1,8 +1,8 @@
-use crate::engines::observability::{ObservabilityManager, EventFilter, ErrorSeverity};
-use crate::engines::streaming::{StreamingService, StreamingConfig, StreamQuery};
-use crate::engines::observability_endpoints::create_observability_router;
-use crate::database::{DatabaseManager, DatabaseConfig};
-use crate::error::AriaError;
+use aria_runtime::engines::observability::{ObservabilityManager, EventFilter, ErrorSeverity};
+use aria_runtime::engines::streaming::{StreamingService, StreamingConfig, StreamQuery};
+use aria_runtime::engines::observability_endpoints::create_observability_router;
+use aria_runtime::database::{DatabaseManager, DatabaseConfig};
+use aria_runtime::errors::AriaError;
 use axum::Router;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -10,8 +10,30 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{info, warn, error};
 
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize tracing
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .init();
+
+    info!("🚀 Starting Aria Runtime Observability & Streaming Demo");
+    
+    // Run the comprehensive demo
+    match run_observability_streaming_demo().await {
+        Ok(_) => {
+            info!("✅ All observability and streaming tests passed!");
+            std::process::exit(0);
+        }
+        Err(e) => {
+            error!("❌ Demo failed: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
 /// Complete observability and streaming demonstration
-pub async fn run_observability_streaming_demo() -> Result<(), AriaError> {
+async fn run_observability_streaming_demo() -> Result<(), AriaError> {
     info!("🚀 Starting Aria Runtime Observability & Streaming Demo");
     
     // Initialize database
@@ -126,7 +148,12 @@ async fn demo_event_recording(observability: &ObservabilityManager) -> Result<()
         ("operation".to_string(), "completion_request".to_string()),
     ]);
     
-    let test_error = AriaError::Engine("Test error for observability demo".to_string());
+    let test_error = AriaError::new(
+        aria_runtime::errors::ErrorCode::LLMError,
+        aria_runtime::errors::ErrorCategory::LLM,
+        aria_runtime::errors::ErrorSeverity::Medium,
+        "Test error for observability demo"
+    );
     observability.record_error(&test_error, "llm_handler", context).await?;
     
     info!("✅ Events recorded successfully");
@@ -408,7 +435,8 @@ async fn demo_http_endpoints(router: &Router) -> Result<(), AriaError> {
 }
 
 /// Helper function to demonstrate the complete system in a simple way
-pub async fn simple_observability_demo() -> Result<(), AriaError> {
+#[allow(dead_code)]
+async fn simple_observability_demo() -> Result<(), AriaError> {
     info!("🎯 Simple Observability Demo");
     
     // Initialize minimal system

@@ -1,6 +1,6 @@
 use crate::engines::observability::{ObservabilityManager, EventFilter, ErrorSeverity};
 use crate::engines::streaming::{StreamingService, StreamQuery};
-use crate::error::AriaError;
+use crate::errors::AriaError;
 use axum::{
     extract::{Query, State, Path},
     http::{header, HeaderMap, StatusCode},

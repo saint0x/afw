@@ -138,7 +138,18 @@ impl AriaEngines {
             llm_handler.clone(),
         ));
 
-        // 5. Assemble the final struct
+        // 5. Observability and Streaming services
+        let observability = Arc::new(engines::observability::ObservabilityManager::new(
+            database_manager.clone(),
+            10000 // Event buffer size
+        ).expect("Failed to create observability manager"));
+        
+        let streaming = Arc::new(engines::streaming::StreamingService::new(
+            observability.clone(),
+            engines::streaming::StreamingConfig::default()
+        ));
+
+        // 6. Assemble the final struct
         Self {
             execution,
             planning,
@@ -151,6 +162,8 @@ impl AriaEngines {
             quilt_service,
             icc_engine,
             database: database_manager,
+            observability,
+            streaming,
         }
     }
 }

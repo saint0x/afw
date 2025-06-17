@@ -16,6 +16,9 @@ pub enum ErrorCode {
     SystemInitializationFailure,
     InitializationFailed,
     ConfigError,
+    EngineInitializationFailed,
+    EngineShutdownFailed,
+    HealthCheckFailed,
 
     // Execution Errors
     ExecutionError,
@@ -89,6 +92,7 @@ pub enum ErrorCategory {
     Planning,
     Reflection,
     Security,
+    Engine,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
