@@ -45,7 +45,7 @@ pub struct ICCRequestContext {
 }
 
 /// Tool execution request from container
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ToolExecutionRequest {
     pub tool_name: String,
     pub parameters: serde_json::Value,
@@ -82,7 +82,7 @@ pub struct AgentInvocationResponse {
 }
 
 /// LLM completion request from container
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct LLMCompletionRequest {
     pub messages: Vec<LLMMessage>,
     pub model: Option<String>,

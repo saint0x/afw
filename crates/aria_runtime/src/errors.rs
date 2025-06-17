@@ -56,6 +56,9 @@ pub enum ErrorCode {
     // Container Errors
     ContainerError,
     ContainerOperationFailed,
+    
+    // Database Errors
+    DatabaseError,
 
     // Bundle Errors
     BundleError,

@@ -23,6 +23,7 @@ The runtime consists of several key components:
 #![doc = include_str!("../../../ARIARUNTIME.md")]
 
 pub mod context;
+pub mod database;
 pub mod deep_size;
 pub mod engines;
 pub mod errors;
@@ -58,6 +59,7 @@ use crate::engines::{
     ExecutionEngineInterface,
     LLMHandlerWrapper,
 };
+use crate::database::{DatabaseManager, DatabaseConfig};
 
 /// Runtime version
 pub const RUNTIME_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -97,6 +99,11 @@ impl AriaEngines {
                 .expect("Failed to connect to Quilt daemon"),
         ));
         let system_prompt = Arc::new(SystemPromptService::new());
+        
+        // 1.5. Initialize database manager
+        let database_config = DatabaseConfig::default(); // Use default config for now
+        let database_manager = Arc::new(DatabaseManager::new(database_config));
+        database_manager.initialize().await.expect("Failed to initialize database manager");
 
         // 2. Tool Registry, which depends on core services
         let tool_registry = Arc::new(ToolRegistry::new(
@@ -143,6 +150,7 @@ impl AriaEngines {
             system_prompt,
             quilt_service,
             icc_engine,
+            database: database_manager,
         }
     }
 }

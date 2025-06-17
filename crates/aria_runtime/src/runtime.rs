@@ -19,6 +19,7 @@ use std::collections::HashMap;
 
 /// Main Aria Runtime orchestrator - preserves Symphony's cognitive architecture
 /// while adding container orchestration capabilities
+#[derive(Clone)]
 pub struct AriaRuntime {
     pub config: RuntimeConfiguration,
     pub engines: Arc<AriaEngines>,
@@ -42,6 +43,17 @@ impl AriaRuntime {
             metrics: Arc::new(RwLock::new(Self::create_initial_metrics())),
             active_sessions: Arc::new(RwLock::new(HashMap::new())),
         })
+    }
+
+    /// Creates a new instance of the Aria Runtime with pre-made engines.
+    pub fn with_engines(engines: AriaEngines, config: RuntimeConfiguration) -> Self {
+        Self {
+            config,
+            engines: Arc::new(engines),
+            status: Arc::new(RwLock::new(RuntimeStatus::Ready)),
+            metrics: Arc::new(RwLock::new(Self::create_initial_metrics())),
+            active_sessions: Arc::new(RwLock::new(HashMap::new())),
+        }
     }
 
     /// Executes a task based on the provided configuration and context.

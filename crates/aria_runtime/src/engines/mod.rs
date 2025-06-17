@@ -17,6 +17,7 @@ use crate::engines::tool_registry::ToolRegistry;
 use crate::engines::system_prompt::SystemPromptService;
 use crate::engines::container::quilt::QuiltService;
 use crate::engines::icc::ICCEngine;
+use crate::database::{DatabaseManager, DatabaseConfig};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::path::PathBuf;
@@ -46,6 +47,7 @@ pub struct AriaEngines {
     pub system_prompt: Arc<SystemPromptService>,
     pub quilt_service: Arc<Mutex<QuiltService>>,
     pub icc_engine: Arc<ICCEngine>,
+    pub database: Arc<DatabaseManager>,
 }
 
 impl AriaEngines {
