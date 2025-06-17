@@ -253,7 +253,7 @@ impl AriaEngines {
             context_hints: Vec::new(),
         };
 
-        let intelligence_result = self.intelligence.manager().analyze_container_request(&container_request).await?;
+        let intelligence_result = self.intelligence.manager().analyze_container_request(&container_request, &session_id).await?;
 
         match intelligence_result.recommendation.action {
             RecommendationAction::UsePattern => {
