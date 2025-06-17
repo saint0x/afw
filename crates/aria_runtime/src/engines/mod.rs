@@ -16,6 +16,7 @@ use crate::engines::llm::{LLMHandler, LLMHandlerInterface};
 use crate::engines::tool_registry::ToolRegistry;
 use crate::engines::system_prompt::SystemPromptService;
 use crate::engines::container::quilt::QuiltService;
+use crate::engines::icc::ICCEngine;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::path::PathBuf;
@@ -31,6 +32,7 @@ pub mod tool_registry;
 pub mod system_prompt;
 pub mod container;
 pub mod config;
+pub mod icc;
 
 /// Main orchestrator for all Aria runtime engines
 pub struct AriaEngines {
@@ -43,6 +45,7 @@ pub struct AriaEngines {
     pub tool_registry: Arc<ToolRegistry>,
     pub system_prompt: Arc<SystemPromptService>,
     pub quilt_service: Arc<Mutex<QuiltService>>,
+    pub icc_engine: Arc<ICCEngine>,
 }
 
 impl AriaEngines {
@@ -53,12 +56,14 @@ impl AriaEngines {
         self.planning.initialize() &&
         self.conversation.initialize() &&
         self.reflection.initialize() &&
-        self.context_manager.initialize()
+        self.context_manager.initialize() &&
+        self.icc_engine.initialize()
     }
 
     /// Shutdown all engines gracefully
     pub fn shutdown_all(&self) -> bool {
         // Shutdown engines in reverse dependency order
+        self.icc_engine.shutdown() &&
         self.context_manager.shutdown() &&
         self.reflection.shutdown() &&
         self.conversation.shutdown() &&
@@ -72,7 +77,8 @@ impl AriaEngines {
         self.planning.health_check() &&
         self.conversation.health_check() &&
         self.reflection.health_check() &&
-        self.context_manager.health_check()
+        self.context_manager.health_check() &&
+        self.icc_engine.health_check()
     }
 }
 
@@ -342,6 +348,7 @@ pub struct ContainerInfo {
 }
 
 // Status of the Inter-Container Communication (ICC) server
+#[derive(Debug)]
 pub enum ICCServerStatus {
     Starting,
     Running,

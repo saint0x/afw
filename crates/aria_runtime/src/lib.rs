@@ -34,6 +34,7 @@ pub mod tools;
 pub mod types;
 
 use std::sync::Arc;
+use std::collections::HashMap;
 use futures::future::BoxFuture;
 use tokio::sync::Mutex;
 
@@ -122,7 +123,15 @@ impl AriaEngines {
             crate::types::AgentConfig::default(),
         ));
 
-        // 4. Assemble the final struct
+        // 4. ICC Engine for container communication
+        let icc_engine = Arc::new(engines::icc::ICCEngine::new(
+            "10.42.0.1".to_string(), // Bridge IP
+            8080,                     // ICC port
+            tool_registry.clone(),
+            llm_handler.clone(),
+        ));
+
+        // 5. Assemble the final struct
         Self {
             execution,
             planning,
@@ -133,6 +142,7 @@ impl AriaEngines {
             tool_registry,
             system_prompt,
             quilt_service,
+            icc_engine,
         }
     }
 }
@@ -146,5 +156,25 @@ impl AriaRuntime {
         session_id: DeepUuid,
     ) -> AriaResult<ToolResult> {
         self.engines.execution.execute_container_workload(spec, exec_command, context, session_id).await
+    }
+
+    /// Start the ICC server for container communication
+    pub async fn start_icc_server(&self) -> AriaResult<()> {
+        self.engines.icc_engine.start_server().await
+    }
+
+    /// Stop the ICC server
+    pub async fn stop_icc_server(&self) -> AriaResult<()> {
+        self.engines.icc_engine.stop_server().await
+    }
+
+    /// Create ICC environment variables for container with specified permissions
+    pub fn create_icc_environment(
+        &self,
+        session_id: uuid::Uuid,
+        container_id: String,
+        permissions: Vec<String>,
+    ) -> AriaResult<HashMap<String, String>> {
+        self.engines.icc_engine.create_icc_environment(session_id, container_id, permissions)
     }
 } 

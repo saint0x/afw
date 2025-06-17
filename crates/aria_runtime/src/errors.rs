@@ -63,6 +63,13 @@ pub enum ErrorCode {
     // Network Errors
     NetworkError,
     UpstreamServiceError,
+
+    // Security Errors
+    AuthenticationFailed,
+    PermissionDenied,
+    
+    // Tool Execution Errors
+    ToolExecutionFailed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -78,6 +85,7 @@ pub enum ErrorCategory {
     Network,
     Planning,
     Reflection,
+    Security,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
