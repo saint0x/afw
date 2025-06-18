@@ -3,7 +3,7 @@
 
 use aria_runtime::{AriaRuntime, RuntimeConfiguration};
 use aria_runtime::types::{AgentConfig, TaskComplexity, RuntimeContext};
-use aria_runtime::engines::{AriaEngines, ExecutionEngineInterface, PlanningEngineInterface, ReflectionEngineInterface};
+use aria_runtime::engines::{ExecutionEngineInterface, PlanningEngineInterface, ReflectionEngineInterface, ConversationEngineInterface};
 use tokio;
 
 #[tokio::test]
@@ -30,7 +30,9 @@ async fn test_execution_engine() {
         Ok(result) => {
             println!("✅ Execution engine working!");
             println!("  - Success: {}", result.success);
-            println!("  - Execution time: {}ms", result.execution_time_ms);
+            if let Some(response) = result.result {
+                println!("  - Result: {:?}", response);
+            }
         }
         Err(e) => {
             println!("❌ Execution engine failed: {}", e);
@@ -154,10 +156,10 @@ async fn test_conversation_engine() {
     let runtime = AriaRuntime::new(config).await.expect("Runtime should initialize");
     runtime.initialize().await.expect("Engines should initialize");
     
-    let mut context = RuntimeContext::default();
+    let context = RuntimeContext::default();
     let task = "Have a conversation about AI capabilities";
     
-    match runtime.engines.conversation.initiate(task, &mut context).await {
+    match runtime.engines.conversation.initiate(task, &context).await {
         Ok(conversation) => {
             println!("✅ Conversation engine working!");
             println!("  - Conversation ID: {:?}", conversation.id);
@@ -180,7 +182,7 @@ async fn test_context_manager() {
     runtime.initialize().await.expect("Engines should initialize");
     
     // Test context operations
-    let session_id = "test_session_123".to_string();
+    let _session_id = "test_session_123".to_string();
     let task = "Test context management";
     
     // This tests our context manager through the runtime
@@ -204,25 +206,58 @@ async fn test_context_manager() {
 }
 
 /// Run all engine tests
-#[tokio::main]
-async fn main() {
+#[tokio::test]
+async fn test_all_engines() {
     println!("🔧 Starting Aria Runtime Engine Tests");
     println!("=====================================");
     
     println!("\n1. Testing Execution Engine...");
-    test_execution_engine().await;
+    let config = RuntimeConfiguration::default();
+    let runtime = AriaRuntime::new(config).await.expect("Runtime should initialize");
+    runtime.initialize().await.expect("Engines should initialize");
+    
+    let agent_config = AgentConfig {
+        name: "execution_test".to_string(),
+        tools: vec!["echo".to_string()],
+        ..Default::default()
+    };
+    
+    let mut context = RuntimeContext::default();
+    context.agent_config = agent_config.clone();
+    
+    let task = "Execute a simple echo command";
+    match runtime.engines.execution.execute(task, &agent_config, &context).await {
+        Ok(result) => {
+            println!("✅ Execution engine working!");
+            println!("  - Success: {}", result.success);
+        }
+        Err(e) => {
+            println!("❌ Execution engine failed: {}", e);
+        }
+    }
     
     println!("\n2. Testing Planning Engine...");
-    test_planning_engine().await;
+    let config = RuntimeConfiguration {
+        enhanced_runtime: true,
+        planning_threshold: TaskComplexity::Simple,
+        ..Default::default()
+    };
     
-    println!("\n3. Testing Reflection Engine...");
-    test_reflection_engine().await;
+    let runtime = AriaRuntime::new(config).await.expect("Runtime should initialize");
+    runtime.initialize().await.expect("Engines should initialize");
     
-    println!("\n4. Testing Conversation Engine...");
-    test_conversation_engine().await;
-    
-    println!("\n5. Testing Context Manager...");
-    test_context_manager().await;
+    let context = RuntimeContext::default();
+    let task = "Create a multi-step plan to research AI trends and write a report";
+    match runtime.engines.planning.analyze_task(task, &context).await {
+        Ok(analysis) => {
+            println!("✅ Task analysis working!");
+            println!("  - Complexity: {:?}", analysis.complexity);
+            println!("  - Requires planning: {}", analysis.requires_planning);
+        }
+        Err(e) => {
+            println!("❌ Task analysis failed: {}", e);
+        }
+    }
     
     println!("\n🎉 All engine tests completed!");
     println!("=====================================");
