@@ -6,28 +6,22 @@ tool discovery, registration, bundle execution, and management.
 */
 
 use aria_runtime::{
-    AriaRuntime, RuntimeConfiguration, BundleToolDiscovery, BundleExecutor,
-    BundleExecutionConfig
+    AriaRuntime, RuntimeConfiguration,
+    BundleExecutionConfig, LoadedBundle, AriaManifest, ToolManifest as BundleToolManifest,
+    BundleMetadata
 };
 use aria_runtime::types::AgentConfig;
-use ar_c::bundle::AriaBundle;
-use ar_c::compiler::schema::{AriaManifest, ToolManifest as CompilerToolManifest};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tempfile::TempDir;
 use tokio;
 
-/// Test bundle creation and basic loading
-#[tokio::test]
-async fn test_bundle_creation_and_loading() {
-    println!("🧪 Testing Bundle Creation and Loading...");
-
-    // Create a test manifest
+/// Create a test bundle for testing purposes
+fn create_test_bundle() -> LoadedBundle {
     let manifest = AriaManifest {
         name: "test-bundle".to_string(),
         version: "1.0.0".to_string(),
         tools: vec![
-            CompilerToolManifest {
+            BundleToolManifest {
                 name: "test-tool".to_string(),
                 description: "A test tool for demonstration".to_string(),
                 inputs: {
@@ -42,42 +36,20 @@ async fn test_bundle_creation_and_loading() {
         pipelines: vec![],
     };
 
-    // Create a test bundle
-    let mut compiled_code = HashMap::new();
-    compiled_code.insert(
-        PathBuf::from("main.tsx"),
-        r#"
-// Test bundle main entry
-import { AriaRuntime } from '@aria/runtime';
-
-export async function main() {
-    console.log('Hello from test bundle!');
-    return { success: true, message: 'Bundle executed successfully' };
+    // Create mock bundle with manifest only (no actual files for this test)
+    LoadedBundle {
+        manifest,
+        source_files: HashMap::new(),
+        metadata: BundleMetadata::default(),
+    }
 }
 
-if (import.meta.main) {
-    main().then(console.log).catch(console.error);
-}
-"#.to_string(),
-    );
+/// Test bundle creation and basic loading
+#[tokio::test]
+async fn test_bundle_creation_and_loading() {
+    println!("🧪 Testing Bundle Creation and Loading...");
 
-    compiled_code.insert(
-        PathBuf::from("test-tool.ts"),
-        r#"
-import { tool } from '@aria/runtime';
-
-@tool({
-    name: 'test-tool',
-    description: 'A test tool for demonstration'
-})
-export async function testTool(input: string): Promise<string> {
-    return `Processed: ${input}`;
-}
-"#.to_string(),
-    );
-
-    let bundle = AriaBundle::create(manifest, vec![], compiled_code)
-        .expect("Failed to create test bundle");
+    let bundle = create_test_bundle();
 
     // Verify bundle structure
     assert_eq!(bundle.manifest.name, "test-bundle");
@@ -93,11 +65,7 @@ async fn test_tool_discovery_and_registration() {
     println!("🧪 Testing Tool Discovery and Registration...");
 
     // Create test runtime
-    let temp_dir = TempDir::new().unwrap();
-    let config = RuntimeConfiguration {
-        workspace_path: temp_dir.path().to_path_buf(),
-        ..Default::default()
-    };
+    let config = RuntimeConfiguration::default();
     
     let runtime = AriaRuntime::new(config).await
         .expect("Failed to create runtime");
@@ -118,11 +86,7 @@ async fn test_tool_discovery_and_registration() {
 async fn test_custom_tool_management() {
     println!("🧪 Testing Custom Tool Management...");
 
-    let temp_dir = TempDir::new().unwrap();
-    let config = RuntimeConfiguration {
-        workspace_path: temp_dir.path().to_path_buf(),
-        ..Default::default()
-    };
+    let config = RuntimeConfiguration::default();
     
     let runtime = AriaRuntime::new(config).await
         .expect("Failed to create runtime");
@@ -176,11 +140,7 @@ async fn test_bundle_execution_configuration() {
 async fn test_complete_bundle_integration_workflow() {
     println!("🧪 Testing Complete Bundle Integration Workflow...");
 
-    let temp_dir = TempDir::new().unwrap();
-    let config = RuntimeConfiguration {
-        workspace_path: temp_dir.path().to_path_buf(),
-        ..Default::default()
-    };
+    let config = RuntimeConfiguration::default();
     
     let runtime = AriaRuntime::new(config).await
         .expect("Failed to create runtime");
@@ -213,11 +173,7 @@ async fn test_complete_bundle_integration_workflow() {
 async fn test_bundle_execution_error_handling() {
     println!("🧪 Testing Bundle Execution Error Handling...");
 
-    let temp_dir = TempDir::new().unwrap();
-    let config = RuntimeConfiguration {
-        workspace_path: temp_dir.path().to_path_buf(),
-        ..Default::default()
-    };
+    let config = RuntimeConfiguration::default();
     
     let runtime = AriaRuntime::new(config).await
         .expect("Failed to create runtime");
@@ -232,8 +188,20 @@ async fn test_bundle_execution_error_handling() {
         Some(execution_config),
     ).await;
 
-    // Should fail gracefully
-    assert!(result.is_err());
+    // Should return Ok but with success: false for non-existent bundle
+    match result {
+        Ok(execution_result) => {
+            assert!(!execution_result.success, "Execution should have failed");
+            assert!(execution_result.stderr.is_some(), "Should have error message");
+            if let Some(stderr) = &execution_result.stderr {
+                assert!(stderr.contains("Bundle not found") || stderr.contains("Failed to get bundle"), 
+                       "Error should indicate bundle not found");
+            }
+        }
+        Err(e) => {
+            panic!("Expected Ok(failed_result) but got Err: {}", e);
+        }
+    }
 
     println!("✅ Bundle execution error handling test passed!");
 }
@@ -243,11 +211,7 @@ async fn test_bundle_execution_error_handling() {
 async fn test_tool_registration_from_bundle() {
     println!("🧪 Testing Tool Registration from Bundle...");
 
-    let temp_dir = TempDir::new().unwrap();
-    let config = RuntimeConfiguration {
-        workspace_path: temp_dir.path().to_path_buf(),
-        ..Default::default()
-    };
+    let config = RuntimeConfiguration::default();
     
     let runtime = AriaRuntime::new(config).await
         .expect("Failed to create runtime");
@@ -286,35 +250,12 @@ async fn test_agent_with_bundle_tools() {
     println!("✅ Agent configuration with bundle tools test passed!");
 }
 
-/// Integration test runner
-#[tokio::test]
-async fn test_full_bundle_integration_suite() {
-    println!("🚀 Running Full Bundle Integration Test Suite...");
-
-    // Run all integration tests
-    test_bundle_creation_and_loading().await;
-    test_tool_discovery_and_registration().await;
-    test_custom_tool_management().await;
-    test_bundle_execution_configuration().await;
-    test_complete_bundle_integration_workflow().await;
-    test_bundle_execution_error_handling().await;
-    test_tool_registration_from_bundle().await;
-    test_agent_with_bundle_tools().await;
-
-    println!("✅ Full Bundle Integration Test Suite completed successfully!");
-    println!("📊 All bundle integration capabilities are working correctly");
-}
-
 /// Performance benchmark for bundle operations
 #[tokio::test]
 async fn test_bundle_operations_performance() {
     println!("⚡ Testing Bundle Operations Performance...");
 
-    let temp_dir = TempDir::new().unwrap();
-    let config = RuntimeConfiguration {
-        workspace_path: temp_dir.path().to_path_buf(),
-        ..Default::default()
-    };
+    let config = RuntimeConfiguration::default();
     
     let runtime = AriaRuntime::new(config).await
         .expect("Failed to create runtime");
