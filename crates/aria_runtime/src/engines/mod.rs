@@ -60,6 +60,7 @@ pub struct AriaEngines {
     pub observability: Arc<ObservabilityManager>,
     pub streaming: Arc<StreamingService>,
     pub intelligence: Arc<IntelligenceEngine>,
+    pub pkg_store: Arc<pkg_store::PackageStore>,
 }
 
 impl AriaEngines {

@@ -163,7 +163,10 @@ impl AriaEngines {
             engines::intelligence::IntelligenceConfig::default()
         ));
 
-        // 7. Assemble the final struct
+        // 7. Package Store for bundle management
+        let pkg_store = Arc::new(pkg_store::PackageStore::new().await.expect("Failed to initialize package store"));
+
+        // 8. Assemble the final struct
         Self {
             execution,
             planning,
@@ -179,6 +182,7 @@ impl AriaEngines {
             observability,
             streaming,
             intelligence,
+            pkg_store,
         }
     }
 }

@@ -7,7 +7,7 @@ automatic tool registration capabilities.
 
 use crate::errors::{AriaError, AriaResult, ErrorCategory, ErrorCode, ErrorSeverity};
 use crate::engines::tool_registry::{ToolManifest, SecurityLevel};
-use crate::pkg_store::PackageStore;
+use pkg_store::PackageStore;
 use pkg_store::bundle::{LoadedBundle, AriaManifest, ToolManifest as BundleToolManifest};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -218,8 +218,8 @@ impl BundleToolDiscovery {
         let mut cache = self.cache.write().await;
         cache.clear();
 
-        for bundle_hash in bundle_hashes {
-            match self.load_bundle_manifest(&bundle_hash).await {
+        for bundle_hash in bundle_hashes.iter() {
+            match self.load_bundle_manifest(bundle_hash).await {
                 Ok(manifest) => {
                     cache.add_bundle(bundle_hash.clone(), manifest);
                 }
@@ -349,7 +349,7 @@ impl BundleToolDiscovery {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pkg_store::PackageStore;
+    use pkg_store::PackageStore;
 
     #[tokio::test]
     async fn test_bundle_manifest_cache() {

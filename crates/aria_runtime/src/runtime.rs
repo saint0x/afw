@@ -7,6 +7,7 @@ use uuid::Uuid;
 use tokio::sync::RwLock;
 use crate::deep_size::DeepUuid;
 use std::path::PathBuf;
+use tracing::{debug, info, warn};
 
 use crate::errors::{AriaError, ErrorCode, ErrorCategory, ErrorSeverity};
 use crate::engines::{AriaEngines, ExecutionEngineInterface, PlanningEngineInterface, ConversationEngineInterface, ReflectionEngineInterface, ContextManagerInterface};
@@ -21,7 +22,6 @@ use std::collections::HashMap;
 use crate::bundle_discovery::BundleToolDiscovery;
 use crate::bundle_executor::{BundleExecutor, BundleExecutionResult, BundleExecutionConfig};
 use crate::engines::tool_registry::bundle_integration::BundleToolRegistry;
-use crate::engines::execution::tool_resolver::ToolResolver;
 use crate::tools::management::custom_tools::CustomToolManager;
 
 /// Main Aria Runtime orchestrator - preserves Symphony's cognitive architecture
@@ -685,15 +685,42 @@ impl AriaRuntime {
     pub async fn register_tools_from_bundle(&self, bundle_hash: &str) -> AriaResult<Vec<String>> {
         info!("Registering tools from bundle: {}", bundle_hash);
 
-        // TODO: Need to add pkg_store to AriaEngines and expose bundle functionality
-        return Err(AriaError::new(
-            ErrorCode::NotSupported,
-            ErrorCategory::Bundle,
-            ErrorSeverity::Medium,
-            "Bundle tool registration not yet implemented - pkg_store not available",
+        // Get bundle discovery service
+        let discovery = Arc::new(BundleToolDiscovery::new(self.engines.pkg_store.clone()));
+        
+        // Create bundle tool registry
+        let bundle_registry = Arc::new(crate::engines::tool_registry::bundle_integration::BundleToolRegistry::new(
+            self.engines.tool_registry.tools.clone(),
+            discovery.clone(),
         ));
 
+        // Scan bundle for tools
+        let bundle_tools = discovery.scan_available_bundles().await?
+            .into_iter()
+            .find(|(hash, _)| hash == bundle_hash)
+            .map(|(_, tools)| tools)
+            .unwrap_or_default();
 
+        let mut registered_tools = Vec::new();
+
+        // Register each tool
+        for tool_name in bundle_tools {
+            if let Some(bundle_entry) = discovery.discover_tool(&tool_name).await? {
+                match bundle_registry.register_tool_from_manifest(&bundle_entry).await {
+                    Ok(registration) => {
+                        let tool_name = registration.tool_name.clone();
+                        registered_tools.push(registration.tool_name);
+                        info!("Registered tool '{}' from bundle", tool_name);
+                    }
+                    Err(e) => {
+                        warn!("Failed to register tool '{}': {}", tool_name, e);
+                    }
+                }
+            }
+        }
+
+        info!("Registered {} tools from bundle '{}'", registered_tools.len(), bundle_hash);
+        Ok(registered_tools)
     }
 
     /// Execute a bundle workload
@@ -705,39 +732,55 @@ impl AriaRuntime {
     ) -> AriaResult<BundleExecutionResult> {
         info!("Executing bundle workload: {} (session: {})", bundle_hash, session_id);
 
-        // TODO: Need to add pkg_store to AriaEngines and expose bundle functionality
-        return Err(AriaError::new(
-            ErrorCode::NotSupported,
-            ErrorCategory::Bundle,
-            ErrorSeverity::Medium,
-            "Bundle execution not yet implemented - infrastructure not available",
+        // Create discovery and bundle registry
+        let discovery = Arc::new(BundleToolDiscovery::new(self.engines.pkg_store.clone()));
+        let bundle_registry = Arc::new(crate::engines::tool_registry::bundle_integration::BundleToolRegistry::new(
+            self.engines.tool_registry.tools.clone(),
+            discovery.clone(),
         ));
+
+        // Create bundle executor
+        let executor = BundleExecutor::new(
+            self.engines.quilt_service.clone(),
+            self.engines.pkg_store.clone(),
+            bundle_registry,
+            discovery,
+        );
+
+        // Execute bundle with provided or default configuration
+        let execution_config = config.unwrap_or_default();
+        executor.execute_bundle(bundle_hash, session_id, Some(execution_config)).await
     }
 
     /// Discover a tool in available bundles
     pub async fn discover_tool_in_bundles(&self, tool_name: &str) -> AriaResult<Option<String>> {
         debug!("Discovering tool in bundles: {}", tool_name);
 
-        // TODO: Need to add pkg_store to AriaEngines and expose bundle functionality
-        return Err(AriaError::new(
-            ErrorCode::NotSupported,
-            ErrorCategory::Bundle,
-            ErrorSeverity::Medium,
-            "Bundle tool discovery not yet implemented - pkg_store not available",
-        ));
+        let discovery = BundleToolDiscovery::new(self.engines.pkg_store.clone());
+        
+        // First try to find the tool in available bundles
+        if let Some(bundle_entry) = discovery.discover_tool(tool_name).await? {
+            return Ok(Some(bundle_entry.bundle_hash));
+        }
+
+        // If not found, return None
+        Ok(None)
     }
 
     /// Get custom tool manager for advanced bundle tool management
     pub async fn get_custom_tool_manager(&self) -> AriaResult<CustomToolManager> {
         debug!("Creating custom tool manager");
 
-        // TODO: Need to add pkg_store to AriaEngines and expose bundle functionality
-        return Err(AriaError::new(
-            ErrorCode::NotSupported,
-            ErrorCategory::Bundle,
-            ErrorSeverity::Medium,
-            "Custom tool manager not yet implemented - infrastructure not available",
+        let discovery = Arc::new(BundleToolDiscovery::new(self.engines.pkg_store.clone()));
+        let bundle_registry = Arc::new(crate::engines::tool_registry::bundle_integration::BundleToolRegistry::new(
+            self.engines.tool_registry.tools.clone(),
+            discovery.clone(),
         ));
+
+        Ok(CustomToolManager::new(
+            bundle_registry,
+            discovery,
+        ))
     }
 
     /// Auto-discover and register all available bundle tools
@@ -757,13 +800,30 @@ impl AriaRuntime {
     pub async fn get_bundle_capabilities_status(&self) -> AriaResult<BundleCapabilitiesStatus> {
         debug!("Getting bundle capabilities status");
 
-        // TODO: Need to add pkg_store to AriaEngines and expose bundle functionality
-        return Err(AriaError::new(
-            ErrorCode::NotSupported,
-            ErrorCategory::Bundle,
-            ErrorSeverity::Medium,
-            "Bundle capabilities status not yet implemented - infrastructure not available",
-        ));
+        let discovery = BundleToolDiscovery::new(self.engines.pkg_store.clone());
+        
+        // Get available bundles and tools
+        let bundle_tools = discovery.scan_available_bundles().await?;
+        let total_available_bundles = bundle_tools.len();
+        let total_available_tools: usize = bundle_tools.iter().map(|(_, tools)| tools.len()).sum();
+        
+        // Get registered custom tools
+        let custom_manager = self.get_custom_tool_manager().await?;
+        let custom_tools = custom_manager.list_custom_tools().await?;
+        
+        // Count unique bundles that have registered tools
+        let unique_registered_bundles = custom_tools.iter()
+            .map(|tool| &tool.bundle_hash)
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+
+        Ok(BundleCapabilitiesStatus {
+            total_available_bundles,
+            total_available_tools,
+            registered_custom_tools: custom_tools.len(),
+            unique_registered_bundles,
+            auto_discovery_enabled: true, // For now, always enabled
+        })
     }
 }
 

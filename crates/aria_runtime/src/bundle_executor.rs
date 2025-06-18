@@ -9,7 +9,7 @@ use crate::bundle_discovery::BundleToolDiscovery;
 use crate::engines::container::quilt::QuiltService;
 use crate::engines::tool_registry::bundle_integration::BundleToolRegistry;
 use crate::errors::{AriaError, AriaResult, ErrorCategory, ErrorCode, ErrorSeverity};
-use crate::pkg_store::PackageStore;
+use pkg_store::PackageStore;
 use crate::deep_size::DeepUuid;
 use pkg_store::bundle::{LoadedBundle, AriaManifest, AgentManifest, TeamManifest, PipelineManifest};
 use chrono::{DateTime, Utc};
@@ -556,7 +556,7 @@ mod tests {
     use super::*;
     use crate::bundle_discovery::BundleToolDiscovery;
     use crate::engines::tool_registry::bundle_integration::BundleToolRegistry;
-    use crate::pkg_store::PackageStore;
+    use pkg_store::PackageStore;
     use std::sync::Arc;
     use std::collections::HashMap;
     use tokio::sync::{RwLock, Mutex};

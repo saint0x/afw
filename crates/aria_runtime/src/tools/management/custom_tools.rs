@@ -9,20 +9,18 @@ use crate::bundle_discovery::BundleToolDiscovery;
 use crate::engines::tool_registry::bundle_integration::{
     BundleToolRegistry, CustomToolEntry, ToolSourceInfo, BundleToolStats
 };
-use crate::engines::execution::tool_resolver::{ToolResolver, BulkRegistrationResult};
 use crate::errors::{AriaError, AriaResult, ErrorCategory, ErrorCode, ErrorSeverity};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
+use tokio::sync::RwLock;
 
 /// Custom tool management service
 pub struct CustomToolManager {
     /// Bundle tool registry
     bundle_registry: Arc<BundleToolRegistry>,
-    /// Tool resolver for discovery
-    tool_resolver: Arc<ToolResolver>,
     /// Bundle discovery service
     discovery: Arc<BundleToolDiscovery>,
 }
@@ -58,8 +56,15 @@ pub struct CustomToolResourceRequirements {
 pub struct ToolDiscoveryResult {
     pub discovered_tools: Vec<String>,
     pub already_registered: Vec<String>,
-    pub registration_results: BulkRegistrationResult,
+    pub registration_results: RegistrationResults,
     pub discovery_timestamp: DateTime<Utc>,
+}
+
+/// Registration results summary
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegistrationResults {
+    pub successful: Vec<String>,
+    pub failed: Vec<(String, String)>, // (tool_name, error_message)
 }
 
 /// Custom tool management statistics
@@ -77,12 +82,10 @@ impl CustomToolManager {
     /// Create a new custom tool manager
     pub fn new(
         bundle_registry: Arc<BundleToolRegistry>,
-        tool_resolver: Arc<ToolResolver>,
         discovery: Arc<BundleToolDiscovery>,
     ) -> Self {
         Self {
             bundle_registry,
-            tool_resolver,
             discovery,
         }
     }
@@ -109,11 +112,11 @@ impl CustomToolManager {
                     capabilities: source_info.tool_manifest.capabilities,
                     security_level: format!("{:?}", source_info.tool_manifest.security_level),
                     resource_requirements: CustomToolResourceRequirements {
-                        memory_mb: source_info.tool_manifest.resource_requirements.memory_mb,
-                        cpu_cores: source_info.tool_manifest.resource_requirements.cpu_cores,
+                        memory_mb: Some(source_info.tool_manifest.resource_requirements.memory_mb),
+                        cpu_cores: source_info.tool_manifest.resource_requirements.cpu_cores.map(|c| c as f64),
                         timeout_seconds: source_info.tool_manifest.resource_requirements.timeout_seconds,
-                        network_access: source_info.tool_manifest.resource_requirements.network_access.unwrap_or(false),
-                        file_system_access: source_info.tool_manifest.resource_requirements.file_system_access.unwrap_or(false),
+                        network_access: true, // Default to true for bundle tools
+                        file_system_access: true, // Default to true for bundle tools
                     },
                 };
                 extended_entries.push(extended_entry);
@@ -177,10 +180,37 @@ impl CustomToolManager {
             }
         }
 
-        // Bulk register new tools
-        let registration_results = self.tool_resolver
-            .bulk_register_tools(&tools_to_register)
-            .await?;
+        // Manually register new tools
+        let mut successful = Vec::new();
+        let mut failed = Vec::new();
+
+        for tool_name in &tools_to_register {
+            match self.discovery.discover_tool(tool_name).await {
+                Ok(Some(tool_entry)) => {
+                    match self.bundle_registry.register_tool_from_manifest(&tool_entry).await {
+                        Ok(_) => {
+                            successful.push(tool_name.clone());
+                            info!("Successfully registered tool: {}", tool_name);
+                        }
+                        Err(e) => {
+                            failed.push((tool_name.clone(), e.to_string()));
+                            warn!("Failed to register tool '{}': {}", tool_name, e);
+                        }
+                    }
+                }
+                Ok(None) => {
+                    failed.push((tool_name.clone(), "Tool not found in bundles".to_string()));
+                }
+                Err(e) => {
+                    failed.push((tool_name.clone(), format!("Discovery failed: {}", e)));
+                }
+            }
+        }
+
+        let registration_results = RegistrationResults {
+            successful,
+            failed,
+        };
 
         let result = ToolDiscoveryResult {
             discovered_tools: discoverable_tools,
@@ -315,12 +345,11 @@ impl CustomToolManager {
 
         // Validate resource requirements
         let req = &source_info.tool_manifest.resource_requirements;
-        if let Some(memory_mb) = req.memory_mb {
-            if memory_mb > 4096 {
-                validation_result.warnings.push(
-                    format!("High memory requirement: {}MB", memory_mb)
-                );
-            }
+        let memory_mb = req.memory_mb;
+        if memory_mb > 4096 {
+            validation_result.warnings.push(
+                format!("High memory requirement: {}MB", memory_mb)
+            );
         }
 
         // Validate security level
@@ -350,7 +379,8 @@ impl CustomToolManager {
     /// Pre-warm discovery cache for better performance
     pub async fn pre_warm_cache(&self) -> AriaResult<()> {
         info!("Pre-warming custom tool management cache");
-        self.tool_resolver.pre_warm_cache().await?;
+        // Force cache refresh in discovery service
+        self.discovery.refresh_cache().await?;
         info!("Cache pre-warming complete");
         Ok(())
     }
@@ -390,16 +420,8 @@ mod tests {
         let discovery = Arc::new(BundleToolDiscovery::new(pkg_store));
         let tools = Arc::new(RwLock::new(HashMap::new()));
         let bundle_registry = Arc::new(BundleToolRegistry::new(tools.clone(), discovery.clone()));
-        
-        // Create mock tool registry and resolver
-        let llm_handler = Arc::new(crate::engines::llm::LLMHandler::new(Default::default()).await.unwrap());
-        let quilt_service = Arc::new(tokio::sync::Mutex::new(
-            crate::engines::container::quilt::QuiltService::new("test-path".to_string()).await.unwrap()
-        ));
-        let tool_registry = Arc::new(crate::engines::tool_registry::ToolRegistry::new(llm_handler, quilt_service).await);
-        let tool_resolver = Arc::new(ToolResolver::new(tool_registry, bundle_registry.clone(), discovery.clone()));
 
-        CustomToolManager::new(bundle_registry, tool_resolver, discovery)
+        CustomToolManager::new(bundle_registry, discovery)
     }
 
     #[tokio::test]
