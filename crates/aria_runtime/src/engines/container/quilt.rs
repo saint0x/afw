@@ -1,5 +1,7 @@
 use std::collections::HashMap;
-use tonic::transport::Channel;
+use tonic::transport::{Channel, Endpoint, Uri};
+use tower::service_fn;
+use hyper_util::rt::TokioIo;
 use crate::engines::config::QuiltConfig;
 use crate::errors::{AriaError, AriaResult, ErrorCategory, ErrorCode, ErrorSeverity};
 use crate::types::{ContainerExecutionResult, ContainerState, ContainerStatus, ResourceUsage};
@@ -27,9 +29,23 @@ pub struct QuiltService {
 }
 
 impl QuiltService {
-    /// Creates a new `QuiltService` and connects to the `quiltd` daemon.
+    /// Creates a new `QuiltService` and connects to the `quiltd` daemon via Unix socket.
     pub async fn new(config: &QuiltConfig) -> Result<Self, tonic::transport::Error> {
-        let client = QuiltServiceClient::connect(config.endpoint.clone()).await?;
+        // Clone the socket path to avoid lifetime issues
+        let socket_path = config.socket_path.clone();
+        
+        // Create a channel that connects to the Unix socket
+        let channel = Endpoint::try_from("http://[::]:50051")?
+            .connect_with_connector(service_fn(move |_: Uri| {
+                let socket_path = socket_path.clone();
+                async move {
+                    let unix_stream = tokio::net::UnixStream::connect(socket_path).await?;
+                    Ok::<_, std::io::Error>(TokioIo::new(unix_stream))
+                }
+            }))
+            .await?;
+
+        let client = QuiltServiceClient::new(channel);
         Ok(Self { client })
     }
 

@@ -2,57 +2,31 @@
 # Orchestration Layer
 
 This crate provides the orchestration layer that manages DAG planning and reinforcement learning loops.
-It wraps the aria_runtime and integrates with the token_api for Quilt communication.
+It wraps the aria_runtime for streamlined task execution.
 */
 
 use aria_runtime::{AriaRuntime, RuntimeConfiguration, AriaResult};
 use aria_runtime::errors::{AriaError, ErrorCode, ErrorCategory, ErrorSeverity};
 use aria_runtime::types::AgentConfig;
-use token_api::TokenApi;
 
 pub struct Orchestrator {
     runtime: AriaRuntime,
-    token_api: TokenApi,
 }
 
 impl Orchestrator {
     pub async fn new(config: RuntimeConfiguration) -> AriaResult<Self> {
-        // TODO: For now, return an error since engines are not implemented yet
-        if true {
-            let token_api = TokenApi::new().await.map_err(|_| {
-                AriaError::new(
-                    ErrorCode::SystemInitializationFailure,
-                    ErrorCategory::System,
-                    ErrorSeverity::Critical,
-                    "Failed to initialize TokenApi"
-                )
-            })?;
-            
-            Ok(Self {
-                runtime: AriaRuntime::new(config).await?,
-                token_api,
-            })
-        } else {
-            Err(AriaError::new(
-                ErrorCode::SystemInitializationFailure,
-                ErrorCategory::System,
-                ErrorSeverity::Critical,
-                "Orchestrator failed to initialize"
-            ))
-        }
+        Ok(Self {
+            runtime: AriaRuntime::new(config).await?,
+        })
     }
 
     pub async fn execute_task(&self, task: &str) -> AriaResult<serde_json::Value> {
-        // TODO: Implement orchestration logic
-        // 1. Plan DAG with runtime
-        // 2. Request tokens from Quilt via token_api
-        // 3. Execute task with resource isolation
-        // 4. Return results
+        // Direct execution through runtime - no token coordination needed
+        // Quilt handles resource management internally through sync engine
         
-        // TODO: Implement proper task execution with agent config
         let agent_config = AgentConfig {
-            name: "default".to_string(),
-            system_prompt: None,
+            name: "orchestrator".to_string(),
+            system_prompt: Some("You are an intelligent orchestrator executing tasks efficiently.".to_string()),
             directives: None,
             tools: vec![],
             agents: vec![],
@@ -60,10 +34,11 @@ impl Orchestrator {
             max_iterations: None,
             timeout_ms: None,
             memory_limit: None,
-            agent_type: Some("default".to_string()),
+            agent_type: Some("orchestrator".to_string()),
             capabilities: vec![],
             memory_enabled: Some(false),
         };
+        
         let result = self.runtime.execute(task, agent_config).await?;
         
         // Extract meaningful result from RuntimeResult
@@ -75,25 +50,39 @@ impl Orchestrator {
                         Ok(serde_json::json!({
                             "success": true,
                             "result": step_result,
-                            "summary": step.summary
+                            "summary": step.summary,
+                            "execution_time_ms": step.duration,
+                            "steps_completed": result.execution_details.completed_steps
                         }))
                     } else {
                         Ok(serde_json::json!({
                             "success": true,
-                            "message": "Task completed successfully"
+                            "message": "Task completed successfully",
+                            "steps_completed": result.execution_details.completed_steps
                         }))
                     }
                 } else {
                     Ok(serde_json::json!({
                         "success": true,
-                        "message": "Task completed successfully"
+                        "message": "Task completed successfully",
+                        "execution_mode": result.mode
                     }))
                 }
             }
             false => Ok(serde_json::json!({
                 "success": false,
-                "error": result.error.unwrap_or_else(|| "Unknown error".to_string())
+                "error": result.error.unwrap_or_else(|| "Unknown error".to_string()),
+                "failed_steps": result.execution_details.failed_steps
             })),
         }
+    }
+
+    /// Get orchestrator runtime status
+    pub fn get_status(&self) -> serde_json::Value {
+        serde_json::json!({
+            "status": "ready",
+            "capabilities": ["task_execution", "container_orchestration", "intelligent_planning"],
+            "version": env!("CARGO_PKG_VERSION")
+        })
     }
 } 

@@ -13,5 +13,4 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 
 # Internal dependencies
-aria_runtime = { path = "../aria_runtime" }
-token_api = { path = "../token_api" } 
+aria_runtime = { path = "../aria_runtime" } 

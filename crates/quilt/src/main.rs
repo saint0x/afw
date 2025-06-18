@@ -822,23 +822,66 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let service = Arc::new(QuiltServiceImpl::new().await
         .map_err(|e| format!("Failed to initialize sync engine: {}", e))?);
     
-    let addr: std::net::SocketAddr = "127.0.0.1:50051".parse()?;
+    // ✅ UNIX SOCKET SETUP - Production ready with proper permissions
+    let socket_path = "/run/quilt/api.sock";
+    
+    // Ensure /run/quilt directory exists
+    if let Some(parent) = std::path::Path::new(socket_path).parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create socket directory: {}", e))?;
+        ConsoleLogger::info(&format!("Created socket directory: {}", parent.display()));
+    }
+    
+    // Remove existing socket if it exists
+    if std::path::Path::new(socket_path).exists() {
+        std::fs::remove_file(socket_path)
+            .map_err(|e| format!("Failed to remove existing socket: {}", e))?;
+        ConsoleLogger::info("Removed existing socket");
+    }
+    
+    // Create Unix Domain Socket listener
+    let uds_listener = tokio::net::UnixListener::bind(socket_path)
+        .map_err(|e| format!("Failed to bind Unix socket: {}", e))?;
+    
+    // Set proper permissions (readable/writable by owner and group)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o660))
+            .map_err(|e| format!("Failed to set socket permissions: {}", e))?;
+        ConsoleLogger::success(&format!("Set socket permissions: 660 on {}", socket_path));
+    }
+    
+    // Create incoming stream from Unix listener
+    let uds_stream = tokio_stream::wrappers::UnixListenerStream::new(uds_listener);
 
-    ConsoleLogger::server_starting(&addr.to_string());
-    ConsoleLogger::success("🚀 Quilt server running with SQLite sync engine - non-blocking operations enabled");
+    ConsoleLogger::server_starting(socket_path);
+    ConsoleLogger::success("🚀 Quilt server running on Unix socket with SQLite sync engine");
+    ConsoleLogger::info("🔒 Production security: Unix domain socket with filesystem permissions");
 
-    // ✅ GRACEFUL SHUTDOWN
+    // ✅ GRACEFUL SHUTDOWN WITH SOCKET CLEANUP
     let service_clone = service.clone();
+    let socket_path_clone = socket_path.to_string();
+    
     tokio::select! {
-        result = Server::builder()
+        result = tonic::transport::Server::builder()
             .add_service(QuiltServiceServer::new((*service).clone()))
-            .serve(addr) => {
+            .serve_with_incoming(uds_stream) => {
             result?;
         }
         _ = tokio::signal::ctrl_c() => {
             ConsoleLogger::info("Received shutdown signal, cleaning up...");
+            
+            // Close sync engine
             service_clone.sync_engine.close().await;
             ConsoleLogger::success("Sync engine closed gracefully");
+            
+            // Remove socket file
+            if let Err(e) = std::fs::remove_file(&socket_path_clone) {
+                ConsoleLogger::warning(&format!("Failed to remove socket file: {}", e));
+            } else {
+                ConsoleLogger::success("Socket file removed");
+            }
         }
     }
 

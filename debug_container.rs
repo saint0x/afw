@@ -29,7 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     println!("🔗 Testing QuiltService connection...");
     let config = QuiltConfig {
-        endpoint: "http://127.0.0.1:50051".to_string(),
+        socket_path: "/run/quilt/api.sock".to_string(),
     };
     let mut quilt = QuiltService::new(&config).await?;
     

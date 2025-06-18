@@ -8,7 +8,7 @@ members = [
     "crates/quilt",
     "crates/state_store",
     "crates/telemetry",
-    "crates/token_api",
+
     "crates/vec_cache",
 ]
 
@@ -72,7 +72,7 @@ tokio-stream = { workspace = true }
 # Our custom crates
 aria_runtime = { path = "crates/aria_runtime" }
 orc = { path = "crates/orc" }
-token_api = { path = "crates/token_api" }  
+  
 state_store = { path = "crates/state_store" }
 vec_cache = { path = "crates/vec_cache" }
 pkg_store = { path = "crates/pkg_store" }
@@ -128,12 +128,8 @@ name = "test_async_agent_tasks"
 path = "test_async_agent_tasks.rs"
 
 [[bin]]
-name = "phase_2_pattern_learning_test"
-path = "phase_2_pattern_learning_test.rs"
-
-[[bin]]
-name = "phase_3_context_tree_test"
-path = "phase_3_context_tree_test.rs"
+name = "unix_socket_infrastructure_test"
+path = "unix_socket_infrastructure_test.rs"
 
 [[bin]]
 name = "phase_4_intelligence_test"

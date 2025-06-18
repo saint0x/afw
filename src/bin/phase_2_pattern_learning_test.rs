@@ -177,8 +177,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             request_description: "build rust project".to_string(),
             session_id: "session_123".to_string(),
             container_spec: ContainerSpec {
+                name: "test-pattern-learning".to_string(),
                 image: "rust:1.70".to_string(),
                 command: vec!["cargo".to_string(), "build".to_string()],
+                args: vec![],
                 environment: HashMap::new(),
                 working_dir: Some("/workspace".to_string()),
                 resource_limits: aria_runtime::types::ResourceLimits {
@@ -187,8 +189,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     disk_mb: Some(2048),
                     timeout_seconds: Some(300),
                 },
-                network_access: false,
                 mount_points: vec![],
+                network_settings: Default::default(),
+                security_context: Default::default(),
+                labels: HashMap::new(),
+                metadata: HashMap::new(),
             },
         },
     };

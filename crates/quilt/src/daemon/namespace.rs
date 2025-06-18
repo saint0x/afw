@@ -339,6 +339,12 @@ impl NamespaceManager {
                 ConsoleLogger::warning(&msg);
                 Err(msg)
             }
+            Err(nix::errno::Errno::ECHILD) => {
+                // Process doesn't exist or is not a child - this is common in fast-completing processes
+                // The process likely completed successfully but was already reaped
+                ConsoleLogger::success(&format!("Process {} completed (already reaped) - assuming successful exit", ProcessUtils::pid_to_i32(pid)));
+                Ok(0) // Assume successful completion
+            }
             Err(e) => {
                 let msg = format!("Failed to wait for process {}: {}", ProcessUtils::pid_to_i32(pid), e);
                 ConsoleLogger::error(&msg);

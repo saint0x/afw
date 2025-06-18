@@ -91,7 +91,7 @@ impl AriaEngines {
         // 1. Core services that everything else depends on
         let llm_handler = LLMHandler::get_instance();
         let quilt_config = QuiltConfig {
-            endpoint: "http://127.0.0.1:50051".to_string(),
+            socket_path: "/run/quilt/api.sock".to_string(),
         };
         let quilt_service = Arc::new(Mutex::new(
             QuiltService::new(&quilt_config)
