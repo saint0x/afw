@@ -650,6 +650,19 @@ impl ContainerPatternProcessor {
         Ok(patterns.values().cloned().collect())
     }
 
+    /// Get a single pattern by its ID
+    pub async fn get_pattern_by_id(&self, pattern_id: &str) -> AriaResult<Option<ContainerPattern>> {
+        let patterns = self.patterns.read().map_err(|_| {
+            AriaError::new(
+                ErrorCode::ExecutionError,
+                ErrorCategory::System,
+                ErrorSeverity::Medium,
+                "Failed to acquire patterns read lock",
+            )
+        })?;
+        Ok(patterns.get(pattern_id).cloned())
+    }
+
     /// Remove pattern by ID
     pub async fn remove_pattern(&self, pattern_id: &str) -> AriaResult<()> {
         info!("Removing pattern: {}", pattern_id);

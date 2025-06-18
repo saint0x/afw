@@ -1,16 +1,17 @@
 /// Intelligence Manager - Main orchestrator for context intelligence
 /// Implements the unified intelligence interface from CTXPLAN.md Phase 4.1
 
-use crate::errors::{AriaError, AriaResult};
 use crate::database::DatabaseManager;
 use crate::engines::observability::ObservabilityManager;
 use crate::engines::intelligence::{IntelligenceConfig, current_timestamp, generate_id};
-use crate::engines::intelligence::types::*;
+use crate::engines::intelligence::context_builder::{ExecutionContextBuilder, ContextBuilderConfig};
 use crate::engines::intelligence::pattern_processor::{ContainerPatternProcessor, PatternProcessorConfig};
 use crate::engines::intelligence::learning_engine::{WorkloadLearningEngine, WorkloadLearningConfig, WorkloadAnalysis};
-use crate::engines::intelligence::context_builder::{ExecutionContextBuilder, ContextBuilderConfig};
+use crate::engines::intelligence::types::*;
 use crate::engines::streaming::StreamingService;
 use crate::engines::Engine;
+use crate::errors::{AriaError, AriaResult, ErrorCode, ErrorCategory, ErrorSeverity};
+use crate::deep_size::DeepUuid;
 
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -182,9 +183,27 @@ impl IntelligenceManager {
 
     /// Get all patterns (for debugging and analytics)
     pub async fn get_all_patterns(&self) -> AriaResult<Vec<ContainerPattern>> {
-        // Phase 1 implementation - return empty patterns
-        // Will be implemented with database queries in Phase 2
-        Ok(Vec::new())
+        self.learning_engine.get_all_patterns().await
+    }
+
+    /// Get a single pattern by its ID.
+    pub async fn get_pattern_by_id(&self, pattern_id: &str) -> AriaResult<ContainerPattern> {
+        self.learning_engine
+            .get_pattern_by_id(pattern_id)
+            .await?
+            .ok_or_else(|| {
+                AriaError::new(
+                    ErrorCode::ToolNotFound,
+                    ErrorCategory::System,
+                    ErrorSeverity::Low,
+                    &format!("Pattern with ID '{}' not found.", pattern_id),
+                )
+            })
+    }
+
+    /// Removes a pattern by its ID.
+    pub async fn remove_pattern(&self, pattern_id: &str) -> AriaResult<()> {
+        self.learning_engine.remove_pattern(pattern_id).await
     }
 
     /// Get context tree for session (Phase 3 implementation)

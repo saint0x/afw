@@ -71,7 +71,7 @@ pub struct ExecutionContextBuilder {
 }
 
 /// Context cache statistics
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, serde::Serialize)]
 pub struct ContextCacheStats {
     pub cache_hits: u64,
     pub cache_misses: u64,

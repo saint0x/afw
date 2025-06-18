@@ -83,6 +83,10 @@ quilt = { path = "crates/quilt" }
 
 tonic = { version = "0.11.0", features = ["transport"] }
 
+# Additional dependencies for testing
+axum = "0.7"
+tower = "0.4"
+
 [[bin]]
 name = "aria-fw"
 path = "src/bin/aria-fw.rs"
@@ -122,3 +126,15 @@ path = "debug_container.rs"
 [[bin]]
 name = "test_async_agent_tasks"
 path = "test_async_agent_tasks.rs"
+
+[[bin]]
+name = "phase_2_pattern_learning_test"
+path = "phase_2_pattern_learning_test.rs"
+
+[[bin]]
+name = "phase_3_context_tree_test"
+path = "phase_3_context_tree_test.rs"
+
+[[bin]]
+name = "phase_4_intelligence_test"
+path = "phase_4_intelligence_test.rs"

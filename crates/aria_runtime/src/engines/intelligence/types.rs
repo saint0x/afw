@@ -2,10 +2,13 @@
 /// Following CTXPLAN.md Phase 1.2 specifications
 
 use crate::errors::{AriaError, AriaResult};
-use crate::types::ContainerSpec;
+use crate::types::{ContainerSpec, MountPoint, NetworkSettings, SecurityContext};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
+use uuid::Uuid;
+
+use crate::deep_size::*;
 
 /// Container execution pattern learned from execution history
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,7 +43,7 @@ impl From<ContainerSpec> for ContainerConfig {
             environment: spec.environment,
             working_directory: spec.working_dir,
             resource_limits: Some(spec.resource_limits.into()),
-            network_config: None, // Will be enhanced later
+            network_config: None, // Simplified for now
             volumes: spec.mount_points.into_iter().map(Into::into).collect(),
         }
     }
@@ -69,6 +72,7 @@ impl From<crate::types::ResourceLimits> for ResourceLimits {
 pub struct NetworkConfig {
     pub network_mode: String,
     pub port_mappings: Vec<PortMapping>,
+    pub dns_servers: Vec<String>,
 }
 
 /// Port mapping for network configuration
@@ -98,25 +102,13 @@ impl From<crate::types::MountPoint> for VolumeMount {
 }
 
 /// Usage statistics for a pattern
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PatternUsageStats {
     pub success_count: u32,
     pub failure_count: u32,
     pub avg_execution_time: Duration,
     pub last_used: Option<SystemTime>,
     pub total_executions: u32,
-}
-
-impl Default for PatternUsageStats {
-    fn default() -> Self {
-        Self {
-            success_count: 0,
-            failure_count: 0,
-            avg_execution_time: Duration::from_secs(0),
-            last_used: None,
-            total_executions: 0,
-        }
-    }
 }
 
 /// Variable extracted from pattern matching
@@ -166,25 +158,13 @@ pub enum ContextType {
 }
 
 /// Metadata for execution contexts
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ContextMetadata {
     pub execution_count: u32,
     pub success_rate: f64,
     pub avg_duration: Duration,
     pub last_execution: Option<SystemTime>,
     pub error_patterns: Vec<String>,
-}
-
-impl Default for ContextMetadata {
-    fn default() -> Self {
-        Self {
-            execution_count: 0,
-            success_rate: 0.0,
-            avg_duration: Duration::from_secs(0),
-            last_execution: None,
-            error_patterns: Vec::new(),
-        }
-    }
 }
 
 /// Learning feedback for pattern improvement
@@ -219,7 +199,7 @@ pub struct PatternMatch {
 }
 
 /// Container execution result for learning
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ContainerExecutionResult {
     pub execution_id: String,
     pub container_id: String,
@@ -236,7 +216,7 @@ pub struct ContainerExecutionResult {
 }
 
 /// Resource usage metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ResourceUsage {
     pub cpu_time_ms: u64,
     pub max_memory_bytes: u64,
@@ -247,7 +227,7 @@ pub struct ResourceUsage {
 }
 
 /// Container workload description
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ContainerWorkload {
     pub workload_id: String,
     pub workload_type: WorkloadType,
@@ -257,8 +237,9 @@ pub struct ContainerWorkload {
 }
 
 /// Types of container workloads
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum WorkloadType {
+    #[default]
     Build,
     Test,
     Exec,
@@ -368,4 +349,93 @@ pub struct IntelligenceToolResult {
     pub result: serde_json::Value,
     pub error: Option<String>,
     pub execution_time: Duration,
+}
+
+/// Metrics for the intelligence engine
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IntelligenceMetrics {
+    pub pattern_cache_size: usize,
+    pub context_cache_size: usize,
+    pub total_queries: u64,
+    pub successful_queries: u64,
+}
+
+/// Workload analysis results (for API responses)
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WorkloadAnalysis {
+    pub session_id: String,
+    pub total_patterns_available: usize,
+    pub patterns_used_in_session: usize,
+    pub avg_pattern_confidence: f64,
+    pub most_successful_patterns: Vec<String>,
+    pub recommended_optimizations: Vec<String>,
+    pub performance_insights: Vec<String>,
+}
+
+/// Request body for intelligence analysis
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IntelligenceAnalysisRequest {
+    pub request: String,
+    pub session_id: String,
+    pub requirements: Option<ContainerRequirements>,
+    pub context_hints: Option<Vec<String>>,
+}
+
+/// Response for intelligence analysis
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IntelligenceAnalysisResponse {
+    pub success: bool,
+    pub result: Option<IntelligenceResult>,
+    pub error: Option<String>,
+    pub execution_time_ms: u64,
+}
+
+/// Request body for pattern confidence updates
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PatternUpdateRequest {
+    pub execution_success: bool,
+    pub execution_time_ms: Option<u64>,
+    pub feedback_notes: Option<String>,
+}
+
+/// Request body for pattern optimization
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OptimizationRequest {
+    pub min_confidence_threshold: Option<f64>,
+    pub max_pattern_age_days: Option<u32>,
+    pub force_optimization: Option<bool>,
+}
+
+/// Response for pattern list
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PatternListResponse {
+    pub success: bool,
+    pub patterns: Vec<ContainerPattern>,
+    pub total_count: usize,
+    pub high_confidence_count: usize,
+}
+
+/// Response for context tree
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ContextTreeResponse {
+    pub success: bool,
+    pub context: Option<ExecutionContext>,
+    pub formatted_prompt: Option<String>,
+    pub cache_stats: Option<serde_json::Value>,
+}
+
+/// Response for learning analytics
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AnalyticsResponse {
+    pub success: bool,
+    pub analytics: Option<LearningAnalytics>,
+    pub workload_analysis: Option<WorkloadAnalysis>,
+    pub intelligence_metrics: Option<IntelligenceMetrics>,
+}
+
+/// Generic success response
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SuccessResponse {
+    pub success: bool,
+    pub message: String,
 } 

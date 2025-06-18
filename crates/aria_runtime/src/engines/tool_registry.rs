@@ -135,6 +135,7 @@ impl ToolRegistry {
         
         registry.register_builtin_tools().await;
         registry.register_container_tools().await;
+        registry.register_intelligence_tools().await;
 
         registry
     }
@@ -184,6 +185,26 @@ impl ToolRegistry {
             println!("📦 Registering container tool: {}", tool.name);
             tools.insert(tool.name.clone(), tool);
         }
+    }
+
+    /// Register intelligence tools for agents to use
+    async fn register_intelligence_tools(&self) {
+        let intelligence_tools = vec![
+            Self::create_analyze_container_pattern_tool(),
+            Self::create_get_execution_context_tool(),
+            Self::create_get_context_for_prompt_tool(),
+            Self::create_optimize_patterns_tool(),
+            Self::create_get_learning_analytics_tool(),
+            Self::create_analyze_session_workloads_tool(),
+            Self::create_clear_context_cache_tool(),
+        ];
+
+        let mut tools = self.tools.write().await;
+        for tool in intelligence_tools {
+            println!("🧠 Registering intelligence tool: {}", tool.name);
+            tools.insert(tool.name.clone(), tool);
+        }
+        println!("✅ Registered {} intelligence tools", 7);
     }
 
     fn create_ponder_tool_static() -> RegistryEntry {
@@ -379,6 +400,203 @@ impl ToolRegistry {
             bundle_id: None,
             version: "1.0.0".to_string(),
             capabilities: vec!["code_generation".to_string(), "programming".to_string(), "file_operations".to_string()],
+            resource_requirements: ResourceRequirements::default(),
+            security_level: SecurityLevel::Limited,
+        }
+    }
+
+    // Intelligence Tools for Agents
+
+    fn create_analyze_container_pattern_tool() -> RegistryEntry {
+        RegistryEntry {
+            name: "analyzeContainerPattern".to_string(),
+            description: "Analyze container request and provide intelligent recommendations based on learned patterns".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "request": {
+                        "type": "string",
+                        "description": "Container request description"
+                    },
+                    "session_id": {
+                        "type": "string", 
+                        "description": "Current session ID"
+                    },
+                    "requirements": {
+                        "type": "object",
+                        "description": "Container requirements (optional)",
+                        "properties": {
+                            "min_memory_mb": { "type": "number" },
+                            "min_cpu_cores": { "type": "number" },
+                            "required_tools": { "type": "array", "items": { "type": "string" } },
+                            "timeout_seconds": { "type": "number" }
+                        }
+                    }
+                },
+                "required": ["request", "session_id"]
+            }),
+            tool_type: ToolType::LLM { provider: "aria_intelligence".to_string(), model: "pattern_analysis".to_string() },
+            scope: ToolScope::Abstract,
+            bundle_id: None,
+            version: "1.0.0".to_string(),
+            capabilities: vec!["pattern_analysis".to_string(), "container_intelligence".to_string()],
+            resource_requirements: ResourceRequirements::default(),
+            security_level: SecurityLevel::Safe,
+        }
+    }
+
+    fn create_get_execution_context_tool() -> RegistryEntry {
+        RegistryEntry {
+            name: "getExecutionContext".to_string(),
+            description: "Get current execution context for intelligent decision making".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "session_id": {
+                        "type": "string",
+                        "description": "Session ID to get context for"
+                    },
+                    "max_nodes": {
+                        "type": "integer",
+                        "description": "Maximum context nodes to return",
+                        "default": 20
+                    }
+                },
+                "required": ["session_id"]
+            }),
+            tool_type: ToolType::LLM { provider: "aria_intelligence".to_string(), model: "context_retrieval".to_string() },
+            scope: ToolScope::Abstract,
+            bundle_id: None,
+            version: "1.0.0".to_string(),
+            capabilities: vec!["context_management".to_string(), "session_intelligence".to_string()],
+            resource_requirements: ResourceRequirements::default(),
+            security_level: SecurityLevel::Safe,
+        }
+    }
+
+    fn create_get_context_for_prompt_tool() -> RegistryEntry {
+        RegistryEntry {
+            name: "getContextForPrompt".to_string(),
+            description: "Get execution context formatted for agent prompts with priority filtering".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "session_id": {
+                        "type": "string",
+                        "description": "Session ID to get context for"
+                    },
+                    "max_nodes": {
+                        "type": "integer",
+                        "description": "Maximum context nodes to include in prompt",
+                        "default": 50
+                    }
+                },
+                "required": ["session_id"]
+            }),
+            tool_type: ToolType::LLM { provider: "aria_intelligence".to_string(), model: "context_formatting".to_string() },
+            scope: ToolScope::Abstract,
+            bundle_id: None,
+            version: "1.0.0".to_string(),
+            capabilities: vec!["context_formatting".to_string(), "prompt_enhancement".to_string()],
+            resource_requirements: ResourceRequirements::default(),
+            security_level: SecurityLevel::Safe,
+        }
+    }
+
+    fn create_optimize_patterns_tool() -> RegistryEntry {
+        RegistryEntry {
+            name: "optimizePatterns".to_string(),
+            description: "Optimize pattern performance and remove low-confidence patterns".to_string(),
+            parameters: serde_json::json!({
+                "type": "object", 
+                "properties": {
+                    "min_confidence": {
+                        "type": "number",
+                        "description": "Minimum confidence threshold for keeping patterns",
+                        "default": 0.3
+                    },
+                    "max_age_days": {
+                        "type": "integer",
+                        "description": "Maximum age in days for patterns",
+                        "default": 30
+                    }
+                }
+            }),
+            tool_type: ToolType::LLM { provider: "aria_intelligence".to_string(), model: "pattern_optimization".to_string() },
+            scope: ToolScope::Abstract,
+            bundle_id: None,
+            version: "1.0.0".to_string(),
+            capabilities: vec!["pattern_optimization".to_string(), "learning_enhancement".to_string()],
+            resource_requirements: ResourceRequirements::default(),
+            security_level: SecurityLevel::Limited,
+        }
+    }
+
+    fn create_get_learning_analytics_tool() -> RegistryEntry {
+        RegistryEntry {
+            name: "getLearningAnalytics".to_string(),
+            description: "Get learning analytics and pattern performance statistics".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "session_id": {
+                        "type": "string",
+                        "description": "Optional session ID for specific analytics"
+                    },
+                    "include_detailed": {
+                        "type": "boolean",
+                        "description": "Include detailed performance metrics",
+                        "default": false
+                    }
+                }
+            }),
+            tool_type: ToolType::LLM { provider: "aria_intelligence".to_string(), model: "analytics_retrieval".to_string() },
+            scope: ToolScope::Abstract,
+            bundle_id: None,
+            version: "1.0.0".to_string(),
+            capabilities: vec!["analytics".to_string(), "performance_monitoring".to_string()],
+            resource_requirements: ResourceRequirements::default(),
+            security_level: SecurityLevel::Safe,
+        }
+    }
+
+    fn create_analyze_session_workloads_tool() -> RegistryEntry {
+        RegistryEntry {
+            name: "analyzeSessionWorkloads".to_string(),
+            description: "Analyze workload patterns and performance for a specific session".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "session_id": {
+                        "type": "string",
+                        "description": "Session ID to analyze"
+                    }
+                },
+                "required": ["session_id"]
+            }),
+            tool_type: ToolType::LLM { provider: "aria_intelligence".to_string(), model: "workload_analysis".to_string() },
+            scope: ToolScope::Abstract,
+            bundle_id: None,
+            version: "1.0.0".to_string(),
+            capabilities: vec!["workload_analysis".to_string(), "session_insights".to_string()],
+            resource_requirements: ResourceRequirements::default(),
+            security_level: SecurityLevel::Safe,
+        }
+    }
+
+    fn create_clear_context_cache_tool() -> RegistryEntry {
+        RegistryEntry {
+            name: "clearContextCache".to_string(),
+            description: "Clear the context cache to force fresh context building".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {}
+            }),
+            tool_type: ToolType::LLM { provider: "aria_intelligence".to_string(), model: "cache_management".to_string() },
+            scope: ToolScope::Abstract,
+            bundle_id: None,
+            version: "1.0.0".to_string(),
+            capabilities: vec!["cache_management".to_string(), "context_refresh".to_string()],
             resource_requirements: ResourceRequirements::default(),
             security_level: SecurityLevel::Limited,
         }

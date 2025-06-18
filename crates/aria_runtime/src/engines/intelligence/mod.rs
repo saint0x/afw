@@ -19,6 +19,7 @@ pub mod pattern_processor;
 pub mod context_builder;
 pub mod learning_engine;
 pub mod manager;
+pub mod intelligence_endpoints;
 
 pub use types::*;
 pub use manager::IntelligenceManager;
@@ -64,6 +65,10 @@ pub struct IntelligenceMetrics {
     pub avg_pattern_match_time_ms: f64,
     pub avg_context_build_time_ms: f64,
 }
+
+// Explicit Send + Sync for Axum compatibility
+unsafe impl Send for IntelligenceMetrics {}
+unsafe impl Sync for IntelligenceMetrics {}
 
 impl Default for IntelligenceMetrics {
     fn default() -> Self {
@@ -124,31 +129,27 @@ impl IntelligenceEngine {
 
 impl Engine for IntelligenceEngine {
     fn get_state(&self) -> String {
-        "intelligence_engine_active".to_string()
+        "IntelligenceEngine:Active".to_string()
     }
-
+    
     fn get_dependencies(&self) -> Vec<String> {
-        vec![
-            "database".to_string(),
-            "observability".to_string(),
-        ]
+        vec!["DatabaseManager".to_string(), "ObservabilityManager".to_string()]
     }
-
+    
     fn health_check(&self) -> bool {
-        // Simple health check - verify manager is accessible
-        Arc::strong_count(&self.manager) > 0
+        true // Simple health check - intelligence engine is always healthy if running
     }
-
+    
     fn initialize(&self) -> bool {
-        tracing::info!("Intelligence engine initialized with config: {:?}", self.config);
-        true
+        true // Intelligence engine initializes during construction
     }
-
+    
     fn shutdown(&self) -> bool {
-        tracing::info!("Intelligence engine shutdown complete");
-        true
+        true // Intelligence engine shutdown is graceful
     }
 }
+
+
 
 /// Helper function to get current unix timestamp
 pub fn current_timestamp() -> u64 {

@@ -480,6 +480,21 @@ impl WorkloadLearningEngine {
         &self.pattern_processor
     }
 
+    /// Get all patterns from the underlying processor
+    pub async fn get_all_patterns(&self) -> AriaResult<Vec<ContainerPattern>> {
+        self.pattern_processor.get_all_patterns().await
+    }
+
+    /// Get a single pattern by its ID from the underlying processor
+    pub async fn get_pattern_by_id(&self, pattern_id: &str) -> AriaResult<Option<ContainerPattern>> {
+        self.pattern_processor.get_pattern_by_id(pattern_id).await
+    }
+
+    /// Remove a pattern by its ID from the underlying processor
+    pub async fn remove_pattern(&self, pattern_id: &str) -> AriaResult<()> {
+        self.pattern_processor.remove_pattern(pattern_id).await
+    }
+
     /// Force pattern optimization (for testing/admin use)
     pub async fn force_optimization(&self) -> AriaResult<()> {
         info!("Forcing pattern optimization");
@@ -497,7 +512,7 @@ struct OptimizationStats {
 }
 
 /// Workload analysis results
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct WorkloadAnalysis {
     pub session_id: String,
     pub total_patterns_available: usize,
@@ -506,4 +521,8 @@ pub struct WorkloadAnalysis {
     pub most_successful_patterns: Vec<String>,
     pub recommended_optimizations: Vec<String>,
     pub performance_insights: Vec<String>,
-} 
+}
+
+// Explicit Send + Sync for Axum compatibility
+unsafe impl Send for WorkloadAnalysis {}
+unsafe impl Sync for WorkloadAnalysis {} 

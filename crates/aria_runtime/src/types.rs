@@ -8,6 +8,8 @@ use deepsize::DeepSizeOf;
 
 use crate::deep_size::*;
 
+// Intelligence types are defined in intelligence/types.rs
+
 /// Unique identifier for various runtime entities
 pub type EntityId = DeepUuid;
 
@@ -426,15 +428,20 @@ pub enum StepType {
     ReasoningStep,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, DeepSizeOf)]
 pub struct ContainerSpec {
+    pub name: String,
     pub image: String,
     pub command: Vec<String>,
-    pub environment: HashMap<String, String>,
+    pub args: Vec<String>,
     pub working_dir: Option<String>,
-    pub resource_limits: ResourceLimits,
-    pub network_access: bool,
+    pub environment: std::collections::HashMap<String, String>,
     pub mount_points: Vec<MountPoint>,
+    pub resource_limits: ResourceLimits,
+    pub network_settings: NetworkSettings,
+    pub security_context: SecurityContext,
+    pub labels: std::collections::HashMap<String, String>,
+    pub metadata: std::collections::HashMap<String, String>,
 }
 
 /// The result of executing a command in a container.
@@ -468,7 +475,7 @@ pub struct ContainerStatus {
     pub resource_usage: Option<ResourceUsage>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, DeepSizeOf)]
 pub struct ResourceLimits {
     pub cpu_millis: Option<u32>,
     pub memory_mb: Option<u64>,
@@ -1094,6 +1101,42 @@ impl AgentConfig {
         ));
         config
     }
+}
+
+// ContainerSpec definition removed - using intelligence/types.rs as single source of truth
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum WorkloadType {
+    Build,
+    Deploy,
+    Custom(String),
+}
+
+// ContainerRequest and ContainerRequirements moved to intelligence/types.rs as single source of truth
+
+// Intelligence types moved to intelligence/types.rs to avoid duplication
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, DeepSizeOf)]
+pub struct NetworkSettings {
+    pub network_mode: String,
+    pub port_mappings: Vec<PortMapping>,
+    pub dns_servers: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
+pub struct PortMapping {
+    pub host_port: u16,
+    pub container_port: u16,
+    pub protocol: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, DeepSizeOf)]
+pub struct SecurityContext {
+    pub user_id: Option<u32>,
+    pub group_id: Option<u32>,
+    pub privileged: bool,
+    pub read_only_root_filesystem: bool,
+    pub capabilities: Vec<String>,
 }
 
  
