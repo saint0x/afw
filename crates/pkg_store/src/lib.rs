@@ -63,4 +63,9 @@ impl PackageStore {
         self.signatures.remove(bundle_hash);
         Ok(())
     }
-} 
+}
+
+pub mod bundle;
+
+// Re-export types for convenience
+pub use bundle::{LoadedBundle, AriaManifest, ToolManifest, AgentManifest, TeamManifest, PipelineManifest, BundleError, BundleMetadata}; 

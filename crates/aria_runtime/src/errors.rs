@@ -31,6 +31,18 @@ pub enum ErrorCode {
     ToolInvalidParameters,
     ToolExecutionError,
 
+    // Storage Errors
+    StorageError,
+    IoError,
+    
+    // Bundle-specific Errors
+    BundleNotFound,
+    BundleLoadError,
+    BundleValidationError,
+    
+    // Internal Errors
+    InternalError,
+
     // LLM Errors
     LLMError,
     LLMProviderError,

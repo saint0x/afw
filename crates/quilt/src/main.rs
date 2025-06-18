@@ -144,61 +144,66 @@ impl QuiltService for QuiltServiceImpl {
         request: Request<StartContainerRequest>,
     ) -> Result<Response<StartContainerResponse>, Status> {
         let req = request.into_inner();
-        ConsoleLogger::info(&format!("🚀 [GRPC] Starting container: {}", req.container_id));
+        ConsoleLogger::progress(&format!("🚀 [GRPC] Start request for: {}", req.container_id));
 
-        // Check if container exists and is in correct state
+        // Check if container exists and is in a startable state
         match self.sync_engine.get_container_status(&req.container_id).await {
             Ok(status) => {
-                match status.state {
-                    ContainerState::Created => {
-                        // Container is ready to start
-                        let sync_engine = self.sync_engine.clone();
-                        let container_id = req.container_id.clone();
-                        
-                        // Start container process in background
-                        tokio::spawn(async move {
-                            if let Err(e) = start_container_process(&sync_engine, &container_id).await {
-                                ConsoleLogger::error(&format!("Failed to start container process {}: {}", container_id, e));
-                                let _ = sync_engine.update_container_state(&container_id, ContainerState::Error).await;
-                            }
-                        });
-
-                        ConsoleLogger::success(&format!("Container {} start initiated", req.container_id));
-                        Ok(Response::new(StartContainerResponse {
-                            success: true,
-                            error_message: String::new(),
-                        }))
-                    }
-                    ContainerState::Running => {
-                        ConsoleLogger::warning(&format!("Container {} is already running", req.container_id));
-                        Ok(Response::new(StartContainerResponse {
-                            success: true,
-                            error_message: "Container is already running".to_string(),
-                        }))
-                    }
-                    ContainerState::Starting => {
-                        ConsoleLogger::info(&format!("Container {} is already starting", req.container_id));
-                        Ok(Response::new(StartContainerResponse {
-                            success: true,
-                            error_message: "Container is already starting".to_string(),
-                        }))
-                    }
-                    _ => {
-                        let error_msg = format!("Container {} cannot be started from state: {:?}", req.container_id, status.state);
-                        ConsoleLogger::error(&error_msg);
-                        Ok(Response::new(StartContainerResponse {
-                            success: false,
-                            error_message: error_msg,
-                        }))
-                    }
+                use sync::containers::ContainerState;
+                
+                // Allow starting from Created, Starting (idempotent), or Error states
+                if !matches!(status.state, ContainerState::Created | ContainerState::Starting | ContainerState::Error) {
+                    ConsoleLogger::warning(&format!("Container {} is in state {:?}, cannot start", req.container_id, status.state));
+                    return Ok(Response::new(StartContainerResponse {
+                        success: false,
+                        error_message: format!("Container is in {:?} state, cannot start", status.state),
+                    }));
                 }
+
+                // ✅ IMMEDIATE STATE TRANSITION: Move to Starting state atomically
+                if let Err(e) = self.sync_engine.update_container_state(&req.container_id, ContainerState::Starting).await {
+                    ConsoleLogger::error(&format!("Failed to transition container {} to Starting state: {}", req.container_id, e));
+                    return Ok(Response::new(StartContainerResponse {
+                        success: false,
+                        error_message: format!("Failed to update container state: {}", e),
+                    }));
+                }
+
+                ConsoleLogger::info(&format!("Container {} transitioned to Starting state", req.container_id));
+
+                // ✅ BACKGROUND PROCESS STARTUP: Don't block the gRPC call
+                let sync_engine = self.sync_engine.clone();
+                let container_id = req.container_id.clone();
+                
+                tokio::spawn(async move {
+                    match start_container_process(&sync_engine, &container_id).await {
+                        Ok(()) => {
+                            ConsoleLogger::success(&format!("Container {} startup completed successfully", container_id));
+                        }
+                        Err(e) => {
+                            ConsoleLogger::error(&format!("Container {} startup failed: {}", container_id, e));
+                            // Update to error state on failure
+                            let _ = sync_engine.update_container_state_with_details(
+                                &container_id, 
+                                ContainerState::Error,
+                                None,
+                                Some(1) // Exit code 1 for startup failure
+                            ).await;
+                        }
+                    }
+                });
+
+                ConsoleLogger::success(&format!("✅ [GRPC] Container {} start initiated", req.container_id));
+                Ok(Response::new(StartContainerResponse {
+                    success: true,
+                    error_message: String::new(),
+                }))
             }
             Err(_) => {
-                let error_msg = format!("Container {} not found", req.container_id);
-                ConsoleLogger::error(&error_msg);
+                ConsoleLogger::error(&format!("Container {} not found", req.container_id));
                 Ok(Response::new(StartContainerResponse {
                     success: false,
-                    error_message: error_msg,
+                    error_message: format!("Container {} not found", req.container_id),
                 }))
             }
         }
@@ -263,14 +268,11 @@ impl QuiltService for QuiltServiceImpl {
     ) -> Result<Response<StopContainerResponse>, Status> {
         let req = request.into_inner();
 
-        // ✅ NON-BLOCKING: Stop monitoring and update state
+        // ✅ NON-BLOCKING: Stop monitoring - let the monitoring loop handle state transitions
         match self.sync_engine.stop_monitoring(&req.container_id).await {
             Ok(()) => {
-                // Update container state to trigger cleanup
-                if let Err(e) = self.sync_engine.update_container_state(&req.container_id, ContainerState::Exited).await {
-                    ConsoleLogger::warning(&format!("Failed to update container state: {}", e));
-                }
-                
+                // ✅ REMOVED REDUNDANT STATE UPDATE: The monitoring loop already handles 
+                // the transition to Exited when the container actually stops
                 ConsoleLogger::success(&format!("Container {} stopped", req.container_id));
                 Ok(Response::new(StopContainerResponse {
                     success: true,
@@ -753,12 +755,11 @@ impl QuiltService for QuiltServiceImpl {
 // ✅ BACKGROUND CONTAINER PROCESS STARTUP
 async fn start_container_process(sync_engine: &SyncEngine, container_id: &str) -> Result<(), String> {
     use daemon::runtime::ContainerRuntime;
+    use std::collections::HashMap;
+    
+    ConsoleLogger::info(&format!("🔄 [STARTUP] Beginning container process startup for: {}", container_id));
     
     // Get container configuration from sync engine
-    let _status = sync_engine.get_container_status(container_id).await
-        .map_err(|e| format!("Failed to get container config: {}", e))?;
-
-    // Get full container config from database to get image_path and command
     let container_record = sqlx::query("SELECT image_path, command FROM containers WHERE id = ?")
         .bind(container_id)
         .fetch_one(sync_engine.pool())
@@ -769,48 +770,138 @@ async fn start_container_process(sync_engine: &SyncEngine, container_id: &str) -
     let command: String = container_record.get("command");
 
     // Convert sync engine config back to legacy format for actual container startup
-    // TODO: Eventually replace this with native sync engine container startup
     let legacy_config = ContainerConfig {
         image_path,
         command: vec!["/bin/sh".to_string(), "-c".to_string(), command],
-        environment: HashMap::new(), // TODO: Get from sync engine
+        environment: HashMap::new(),
         setup_commands: vec![],
         resource_limits: Some(CgroupLimits::default()),
         namespace_config: Some(NamespaceConfig::default()),
         working_directory: None,
     };
 
-    // Create legacy runtime for actual process management (temporary)
+    // Create legacy runtime for actual process management
     let runtime = ContainerRuntime::new();
     
-    // Update state to Starting
-    sync_engine.update_container_state(container_id, ContainerState::Starting).await
-        .map_err(|e| format!("Failed to update state: {}", e))?;
+    ConsoleLogger::debug(&format!("🏗️ [STARTUP] Creating container in legacy runtime: {}", container_id));
 
     // Create container in legacy runtime
     runtime.create_container(container_id.to_string(), legacy_config)
         .map_err(|e| format!("Failed to create legacy container: {}", e))?;
 
-    // Start the container
+    ConsoleLogger::debug(&format!("🚀 [STARTUP] Starting container process: {}", container_id));
+
+    // Start the container and monitor its lifecycle
     match runtime.start_container(container_id, None) {
         Ok(()) => {
-            // Get the PID from legacy runtime and store in sync engine
-            if let Some(container) = runtime.get_container_info(container_id) {
-                if let Some(pid) = container.pid {
-                    sync_engine.set_container_pid(container_id, pid).await
-                        .map_err(|e| format!("Failed to set PID: {}", e))?;
+            ConsoleLogger::info(&format!("✅ [STARTUP] Container process started successfully: {}", container_id));
+            
+            // ✅ ATOMIC STATE UPDATE: Get PID and transition to Running atomically
+            if let Some(container_info) = runtime.get_container_info(container_id) {
+                if let Some(pid) = container_info.pid {
+                    // Update to Running state with PID in one atomic operation
+                    sync_engine.update_container_state_with_details(
+                        container_id, 
+                        ContainerState::Running,
+                        Some(pid.as_raw() as i64),
+                        None
+                    ).await.map_err(|e| format!("Failed to update to running state: {}", e))?;
+                    
+                    ConsoleLogger::success(&format!("🏃 [STARTUP] Container {} is now Running (PID: {})", container_id, pid.as_raw()));
+                    
+                    // ✅ WAIT FOR COMPLETION: Monitor process and handle exit atomically
+                    tokio::spawn(async move {
+                        // Wait for the container to complete
+                        loop {
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            
+                            match runtime.get_container_info(container_id) {
+                                Some(info) => {
+                                    match info.state {
+                                        daemon::runtime::ContainerState::EXITED(exit_code) => {
+                                            ConsoleLogger::info(&format!("🏁 [LIFECYCLE] Container {} completed with exit code: {}", container_id, exit_code));
+                                            
+                                            // ✅ ATOMIC EXIT UPDATE: Update to Exited state with exit code
+                                            let _ = sync_engine.update_container_state_with_details(
+                                                container_id,
+                                                ContainerState::Exited,
+                                                None, // Clear PID
+                                                Some(exit_code as i64)
+                                            ).await;
+                                            break;
+                                        }
+                                        daemon::runtime::ContainerState::FAILED(error) => {
+                                            ConsoleLogger::error(&format!("❌ [LIFECYCLE] Container {} failed: {}", container_id, error));
+                                            
+                                            // ✅ ATOMIC ERROR UPDATE: Update to Error state
+                                            let _ = sync_engine.update_container_state_with_details(
+                                                container_id,
+                                                ContainerState::Error,
+                                                None, // Clear PID
+                                                Some(1) // Generic error exit code
+                                            ).await;
+                                            break;
+                                        }
+                                        _ => {
+                                            // Still running, continue monitoring
+                                        }
+                                    }
+                                }
+                                None => {
+                                    // Container disappeared, mark as failed
+                                    ConsoleLogger::warning(&format!("⚠️ [LIFECYCLE] Container {} disappeared from runtime", container_id));
+                                    let _ = sync_engine.update_container_state_with_details(
+                                        container_id,
+                                        ContainerState::Error,
+                                        None,
+                                        Some(127) // Process not found exit code
+                                    ).await;
+                                    break;
+                                }
+                            }
+                        }
+                    });
+                    
+                } else {
+                    // No PID available, container might have completed very quickly
+                    ConsoleLogger::warning(&format!("⚠️ [STARTUP] Container {} started but no PID available (may have completed quickly)", container_id));
+                    
+                    // Check if it completed immediately
+                    if let Some(info) = runtime.get_container_info(container_id) {
+                        match info.state {
+                            daemon::runtime::ContainerState::EXITED(exit_code) => {
+                                sync_engine.update_container_state_with_details(
+                                    container_id,
+                                    ContainerState::Exited,
+                                    None,
+                                    Some(exit_code as i64)
+                                ).await.map_err(|e| format!("Failed to update to exited state: {}", e))?;
+                            }
+                            daemon::runtime::ContainerState::FAILED(error) => {
+                                sync_engine.update_container_state_with_details(
+                                    container_id,
+                                    ContainerState::Error,
+                                    None,
+                                    Some(1)
+                                ).await.map_err(|e| format!("Failed to update to error state: {}", e))?;
+                                return Err(format!("Container failed immediately: {}", error));
+                            }
+                            _ => {
+                                // Mark as running without PID
+                                sync_engine.update_container_state(container_id, ContainerState::Running).await
+                                    .map_err(|e| format!("Failed to update to running state: {}", e))?;
+                            }
+                        }
+                    }
                 }
-                
-                // Update state to Running
-                sync_engine.update_container_state(container_id, ContainerState::Running).await
-                    .map_err(|e| format!("Failed to update to running: {}", e))?;
+            } else {
+                return Err("Failed to get container info after startup".to_string());
             }
             
-            ConsoleLogger::success(&format!("Container {} started successfully", container_id));
             Ok(())
         }
         Err(e) => {
-            sync_engine.update_container_state(container_id, ContainerState::Error).await.ok();
+            ConsoleLogger::error(&format!("❌ [STARTUP] Failed to start container {}: {}", container_id, e));
             Err(format!("Failed to start container: {}", e))
         }
     }

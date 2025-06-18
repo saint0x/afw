@@ -546,6 +546,17 @@ pub struct ResourceUsage {
     pub network_io_kb: u64,
 }
 
+impl Default for ResourceUsage {
+    fn default() -> Self {
+        Self {
+            cpu_time_ms: 0,
+            memory_peak_mb: 0,
+            disk_io_mb: 0,
+            network_io_kb: 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, DeepSizeOf)]
 pub struct TaskAnalysis {
     pub complexity: TaskComplexity,

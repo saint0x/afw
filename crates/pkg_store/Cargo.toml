@@ -14,4 +14,9 @@ tracing = { workspace = true }
 
 # Crypto for signatures and content addressing
 blake3 = { workspace = true }
-ed25519-dalek = { workspace = true } 
+ed25519-dalek = { workspace = true }
+
+# Bundle handling
+zip = "0.6"
+
+# Serialization 

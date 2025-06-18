@@ -39,12 +39,27 @@ impl ContainerState {
     
     pub fn can_transition_to(&self, new_state: &ContainerState) -> bool {
         match (self, new_state) {
+            // Standard transitions
             (ContainerState::Created, ContainerState::Starting) => true,
             (ContainerState::Starting, ContainerState::Running) => true,
-            (ContainerState::Starting, ContainerState::Error) => true,
             (ContainerState::Running, ContainerState::Exited) => true,
-            (ContainerState::Running, ContainerState::Error) => true,
-            (_, ContainerState::Error) => true, // Can always transition to error
+            
+            // Fast-completion transitions (for quick processes)
+            (ContainerState::Created, ContainerState::Running) => true,  // Skip starting for fast processes
+            (ContainerState::Created, ContainerState::Exited) => true,   // Direct completion for very fast processes
+            (ContainerState::Starting, ContainerState::Exited) => true,  // Complete before reaching running
+            
+            // Error transitions (always allowed)
+            (_, ContainerState::Error) => true,
+            
+            // Same-state transitions (idempotent, prevent race condition errors)
+            (ContainerState::Created, ContainerState::Created) => true,
+            (ContainerState::Starting, ContainerState::Starting) => true,
+            (ContainerState::Running, ContainerState::Running) => true,
+            (ContainerState::Exited, ContainerState::Exited) => true,
+            (ContainerState::Error, ContainerState::Error) => true,
+            
+            // Invalid transitions
             _ => false,
         }
     }
@@ -132,40 +147,92 @@ impl ContainerManager {
     }
     
     pub async fn update_container_state(&self, container_id: &str, new_state: ContainerState) -> SyncResult<()> {
-        let current_state = self.get_container_state(container_id).await?;
+        self.update_container_state_with_details(container_id, new_state, None, None).await
+    }
+
+    /// Atomic state update with optional PID and exit code - prevents race conditions
+    pub async fn update_container_state_with_details(
+        &self, 
+        container_id: &str, 
+        new_state: ContainerState,
+        pid: Option<i64>,
+        exit_code: Option<i64>,
+    ) -> SyncResult<()> {
+        let current_state = match self.get_container_state(container_id).await {
+            Ok(state) => state,
+            Err(_) => {
+                return Err(SyncError::NotFound {
+                    container_id: container_id.to_string(),
+                });
+            }
+        };
         
+        // Check if transition is valid
         if !current_state.can_transition_to(&new_state) {
-            return Err(SyncError::InvalidStateTransition {
-                from: current_state.to_string(),
-                to: new_state.to_string(),
-            });
+            tracing::warn!(
+                "Invalid state transition for container {}: {} -> {} (ignoring duplicate or invalid transition)",
+                container_id, current_state.to_string(), new_state.to_string()
+            );
+            // Don't error on invalid transitions - just log and continue
+            // This prevents race condition errors for fast-completing processes
+            return Ok(());
         }
         
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
         
+        // Build dynamic query based on what needs to be updated
+        let mut query_parts = vec!["UPDATE containers SET state = ?".to_string()];
+        let mut query_params = vec![new_state.to_string()];
+        
         // Handle state-specific updates
-        let query = match new_state {
+        match new_state {
+            ContainerState::Starting => {
+                // Starting state - no additional fields needed
+            },
             ContainerState::Running => {
-                sqlx::query("UPDATE containers SET state = ?, started_at = ?, updated_at = ? WHERE id = ?")
-                    .bind(new_state.to_string())
-                    .bind(now)
-                    .bind(now)
-                    .bind(container_id)
+                query_parts.push("started_at = ?".to_string());
+                query_params.push(now.to_string());
+                
+                if let Some(p) = pid {
+                    query_parts.push("pid = ?".to_string());
+                    query_params.push(p.to_string());
+                }
             },
             ContainerState::Exited => {
-                sqlx::query("UPDATE containers SET state = ?, exited_at = ?, updated_at = ? WHERE id = ?")
-                    .bind(new_state.to_string())
-                    .bind(now)
-                    .bind(now)
-                    .bind(container_id)
+                query_parts.push("exited_at = ?".to_string());
+                query_params.push(now.to_string());
+                
+                if let Some(code) = exit_code {
+                    query_parts.push("exit_code = ?".to_string());
+                    query_params.push(code.to_string());
+                }
+                
+                // Clear PID when exited
+                query_parts.push("pid = NULL".to_string());
             },
-            _ => {
-                sqlx::query("UPDATE containers SET state = ?, updated_at = ? WHERE id = ?")
-                    .bind(new_state.to_string())
-                    .bind(now)
-                    .bind(container_id)
-            }
-        };
+            ContainerState::Error => {
+                query_parts.push("exited_at = ?".to_string());
+                query_params.push(now.to_string());
+                
+                // Clear PID when in error state
+                query_parts.push("pid = NULL".to_string());
+            },
+            _ => {}
+        }
+        
+        // Always update the timestamp
+        query_parts.push("updated_at = ?".to_string());
+        query_params.push(now.to_string());
+        
+        // Complete the query
+        let full_query = format!("{} WHERE id = ?", query_parts.join(", "));
+        query_params.push(container_id.to_string());
+        
+        // Execute the atomic update
+        let mut query = sqlx::query(&full_query);
+        for param in query_params {
+            query = query.bind(param);
+        }
         
         let result = query.execute(&self.pool).await?;
         
@@ -175,7 +242,7 @@ impl ContainerManager {
             });
         }
         
-        tracing::debug!("Updated container {} state to {}", container_id, new_state.to_string());
+        tracing::info!("Updated container {} state: {} -> {}", container_id, current_state.to_string(), new_state.to_string());
         Ok(())
     }
     

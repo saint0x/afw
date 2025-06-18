@@ -17,6 +17,13 @@ use std::collections::HashMap;
 
 // RuntimeResult is defined in types.rs
 
+// Add bundle-related imports
+use crate::bundle_discovery::BundleToolDiscovery;
+use crate::bundle_executor::{BundleExecutor, BundleExecutionResult, BundleExecutionConfig};
+use crate::engines::tool_registry::bundle_integration::BundleToolRegistry;
+use crate::engines::execution::tool_resolver::ToolResolver;
+use crate::tools::management::custom_tools::CustomToolManager;
+
 /// Main Aria Runtime orchestrator - preserves Symphony's cognitive architecture
 /// while adding container orchestration capabilities
 #[derive(Clone)]
@@ -673,6 +680,91 @@ impl AriaRuntime {
     pub async fn get_active_sessions(&self) -> Vec<Uuid> {
         self.active_sessions.read().await.keys().cloned().collect()
     }
+
+    /// Register tools from a bundle
+    pub async fn register_tools_from_bundle(&self, bundle_hash: &str) -> AriaResult<Vec<String>> {
+        info!("Registering tools from bundle: {}", bundle_hash);
+
+        // TODO: Need to add pkg_store to AriaEngines and expose bundle functionality
+        return Err(AriaError::new(
+            ErrorCode::NotSupported,
+            ErrorCategory::Bundle,
+            ErrorSeverity::Medium,
+            "Bundle tool registration not yet implemented - pkg_store not available",
+        ));
+
+
+    }
+
+    /// Execute a bundle workload
+    pub async fn execute_bundle_workload(
+        &self,
+        bundle_hash: &str,
+        session_id: DeepUuid,
+        config: Option<BundleExecutionConfig>,
+    ) -> AriaResult<BundleExecutionResult> {
+        info!("Executing bundle workload: {} (session: {})", bundle_hash, session_id);
+
+        // TODO: Need to add pkg_store to AriaEngines and expose bundle functionality
+        return Err(AriaError::new(
+            ErrorCode::NotSupported,
+            ErrorCategory::Bundle,
+            ErrorSeverity::Medium,
+            "Bundle execution not yet implemented - infrastructure not available",
+        ));
+    }
+
+    /// Discover a tool in available bundles
+    pub async fn discover_tool_in_bundles(&self, tool_name: &str) -> AriaResult<Option<String>> {
+        debug!("Discovering tool in bundles: {}", tool_name);
+
+        // TODO: Need to add pkg_store to AriaEngines and expose bundle functionality
+        return Err(AriaError::new(
+            ErrorCode::NotSupported,
+            ErrorCategory::Bundle,
+            ErrorSeverity::Medium,
+            "Bundle tool discovery not yet implemented - pkg_store not available",
+        ));
+    }
+
+    /// Get custom tool manager for advanced bundle tool management
+    pub async fn get_custom_tool_manager(&self) -> AriaResult<CustomToolManager> {
+        debug!("Creating custom tool manager");
+
+        // TODO: Need to add pkg_store to AriaEngines and expose bundle functionality
+        return Err(AriaError::new(
+            ErrorCode::NotSupported,
+            ErrorCategory::Bundle,
+            ErrorSeverity::Medium,
+            "Custom tool manager not yet implemented - infrastructure not available",
+        ));
+    }
+
+    /// Auto-discover and register all available bundle tools
+    pub async fn auto_discover_bundle_tools(&self) -> AriaResult<usize> {
+        info!("Auto-discovering and registering all bundle tools");
+
+        let custom_tool_manager = self.get_custom_tool_manager().await?;
+        let discovery_result = custom_tool_manager.discover_and_register_all_tools().await?;
+
+        let registered_count = discovery_result.registration_results.successful.len();
+        info!("Auto-discovery completed: {} tools registered", registered_count);
+
+        Ok(registered_count)
+    }
+
+    /// Get bundle execution capabilities status
+    pub async fn get_bundle_capabilities_status(&self) -> AriaResult<BundleCapabilitiesStatus> {
+        debug!("Getting bundle capabilities status");
+
+        // TODO: Need to add pkg_store to AriaEngines and expose bundle functionality
+        return Err(AriaError::new(
+            ErrorCode::NotSupported,
+            ErrorCategory::Bundle,
+            ErrorSeverity::Medium,
+            "Bundle capabilities status not yet implemented - infrastructure not available",
+        ));
+    }
 }
 
 // Internal result type for execution phases
@@ -680,4 +772,14 @@ impl AriaRuntime {
 struct InternalExecutionResult {
     success: bool,
     error: Option<String>,
+}
+
+/// Bundle capabilities status
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BundleCapabilitiesStatus {
+    pub total_available_bundles: usize,
+    pub total_available_tools: usize,
+    pub registered_custom_tools: usize,
+    pub unique_registered_bundles: usize,
+    pub auto_discovery_enabled: bool,
 } 

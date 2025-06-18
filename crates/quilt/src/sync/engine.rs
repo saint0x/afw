@@ -243,6 +243,26 @@ impl SyncEngine {
         Ok(())
     }
     
+    /// Update container state with optional PID and exit code atomically - prevents race conditions
+    pub async fn update_container_state_with_details(
+        &self, 
+        container_id: &str, 
+        new_state: ContainerState,
+        pid: Option<i64>,
+        exit_code: Option<i64>,
+    ) -> SyncResult<()> {
+        // Clone the state to use it after the move
+        let state_for_check = new_state.clone();
+        self.container_manager.update_container_state_with_details(container_id, new_state, pid, exit_code).await?;
+        
+        // Trigger cleanup if container is finished
+        if matches!(state_for_check, ContainerState::Exited | ContainerState::Error) {
+            self.trigger_cleanup(container_id).await?;
+        }
+        
+        Ok(())
+    }
+    
     /// Set container PID and start monitoring
     pub async fn set_container_pid(&self, container_id: &str, pid: nix::unistd::Pid) -> SyncResult<()> {
         // Update container record

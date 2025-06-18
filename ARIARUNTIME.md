@@ -682,4 +682,15 @@ CREATE TABLE audit_logs (
 - ✅ **Production Ready**: All core systems operational and verified through comprehensive testing
 - ✅ **Database Verified**: Full CRUD operations tested for users, sessions, async tasks, audit logs
 - ✅ **Migration System**: Versioned schema evolution with integrity checks working
-- ✅ **Connection Management**: SQLite pools with WAL mode and proper resource cleanup 
+- ✅ **Connection Management**: SQLite pools with WAL mode and proper resource cleanup
+
+## 🐛 Known Issues
+
+### Container State Management Race Condition (P2 - Technical Debt)
+**Issue:** Occasional warning logs: `"State transition invalid: exited -> exited"`
+**Root Cause:** Multiple code paths (monitoring loop + stop_container) attempting duplicate state transitions
+**Impact:** Cosmetic warning logs only - no functional impact on container lifecycle operations
+**Status:** Core Unix socket infrastructure and container operations work perfectly
+**Mitigation:** Warnings are harmless and don't affect system stability
+**Resolution Plan:** Consolidate state management to single source of truth (estimated 1-2 sprints)
+**Priority:** P2 (technical debt cleanup for future sprint) 

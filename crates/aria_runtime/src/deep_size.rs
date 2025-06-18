@@ -57,6 +57,51 @@ impl DeepSizeOf for DeepSystemTime {
     }
 }
 
+// --- Constructor Implementations ---
+
+impl DeepUuid {
+    /// Create a new random UUID
+    pub fn new() -> Self {
+        DeepUuid(Uuid::new_v4())
+    }
+}
+
+impl DeepValue {
+    /// Create a DeepValue from a string
+    pub fn string(s: String) -> Self {
+        DeepValue(Value::String(s))
+    }
+    
+    /// Create a DeepValue from an array of values
+    pub fn array(arr: Vec<DeepValue>) -> Self {
+        let values: Vec<Value> = arr.into_iter().map(|dv| dv.0).collect();
+        DeepValue(Value::Array(values))
+    }
+    
+    /// Create a DeepValue from a number
+    pub fn number(n: i64) -> Self {
+        DeepValue(Value::Number(serde_json::Number::from(n)))
+    }
+    
+    /// Create a DeepValue from a boolean
+    pub fn boolean(b: bool) -> Self {
+        DeepValue(Value::Bool(b))
+    }
+    
+    /// Create a null DeepValue
+    pub fn null() -> Self {
+        DeepValue(Value::Null)
+    }
+}
+
+// --- Display Implementation ---
+
+impl std::fmt::Display for DeepUuid {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 // --- Helper Functions for Complex Types ---
 
 pub fn deep_size_of_hashmap_value(

@@ -132,5 +132,9 @@ name = "unix_socket_infrastructure_test"
 path = "unix_socket_infrastructure_test.rs"
 
 [[bin]]
+name = "container_diagnostic_test"
+path = "container_diagnostic_test.rs"
+
+[[bin]]
 name = "phase_4_intelligence_test"
 path = "phase_4_intelligence_test.rs"

@@ -33,6 +33,9 @@ pub mod reflection;
 pub mod runtime;
 pub mod tools;
 pub mod types;
+pub mod agents;
+pub mod bundle_discovery;
+pub mod bundle_executor;
 
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -43,6 +46,10 @@ pub use errors::{AriaError, AriaResult};
 pub use types::{RuntimeConfiguration, RuntimeResult, ContainerSpec, ToolResult, RuntimeContext};
 pub use runtime::AriaRuntime;
 pub use deep_size::DeepUuid;
+// Re-export bundle types from pkg_store
+pub use pkg_store::bundle::{LoadedBundle, AriaManifest, ToolManifest, AgentManifest, TeamManifest, PipelineManifest, BundleError, BundleMetadata};
+pub use bundle_discovery::{BundleToolDiscovery, BundleToolEntry, BundleManifestCache};
+pub use bundle_executor::{BundleExecutor, BundleExecutionResult, BundleExecutionConfig, BundleExecutionStatus};
 
 use crate::engines::{
     AriaEngines,
