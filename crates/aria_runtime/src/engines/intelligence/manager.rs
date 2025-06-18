@@ -8,6 +8,7 @@ use crate::engines::intelligence::{IntelligenceConfig, current_timestamp, genera
 use crate::engines::intelligence::types::*;
 use crate::engines::intelligence::pattern_processor::{ContainerPatternProcessor, PatternProcessorConfig};
 use crate::engines::intelligence::learning_engine::{WorkloadLearningEngine, WorkloadLearningConfig, WorkloadAnalysis};
+use crate::engines::intelligence::context_builder::{ExecutionContextBuilder, ContextBuilderConfig};
 use crate::engines::streaming::StreamingService;
 use crate::engines::Engine;
 
@@ -24,12 +25,11 @@ pub struct IntelligenceManager {
     database: Arc<DatabaseManager>,
     observability: Arc<ObservabilityManager>,
     learning_engine: Arc<WorkloadLearningEngine>,
+    context_builder: Arc<ExecutionContextBuilder>,
     config: IntelligenceConfig,
     
     // Core component placeholders - will be implemented in later phases
     // pattern_processor: Arc<ContainerPatternProcessor>,
-    // context_builder: Arc<ExecutionContextBuilder>, 
-    // learning_engine: Arc<WorkloadLearningEngine>,
     
     // Runtime state
     pattern_cache: Arc<RwLock<HashMap<String, ContainerPattern>>>,
@@ -51,10 +51,26 @@ impl IntelligenceManager {
             learning_config,
         ));
 
+        // Initialize Phase 3 context builder
+        let context_config = ContextBuilderConfig {
+            max_context_depth: config.max_context_depth,
+            max_context_nodes: config.max_context_nodes,
+            context_cache_ttl_seconds: config.context_cache_ttl,
+            max_cache_size: 100,
+            min_priority_threshold: 3,
+            session_context_limit: 20,
+        };
+        let context_builder = Arc::new(ExecutionContextBuilder::new(
+            database.clone(),
+            observability.clone(),
+            context_config,
+        ));
+
         Self {
             database,
             observability,
             learning_engine,
+            context_builder,
             config,
             pattern_cache: Arc::new(RwLock::new(HashMap::new())),
             context_cache: Arc::new(RwLock::new(HashMap::new())),
@@ -142,9 +158,24 @@ impl IntelligenceManager {
                 parameters: self.get_context_schema(),
             },
             IntelligenceTool {
+                name: "get_context_for_prompt".to_string(),
+                description: "Get execution context formatted for agent prompts".to_string(),
+                parameters: self.get_context_prompt_schema(),
+            },
+            IntelligenceTool {
                 name: "optimize_patterns".to_string(),
                 description: "Optimize pattern performance and remove low-confidence patterns".to_string(),
                 parameters: self.get_optimize_schema(),
+            },
+            IntelligenceTool {
+                name: "get_context_cache_stats".to_string(),
+                description: "Get context cache performance statistics".to_string(),
+                parameters: serde_json::json!({"type": "object", "properties": {}}),
+            },
+            IntelligenceTool {
+                name: "clear_context_cache".to_string(),
+                description: "Clear the context cache to force fresh context building".to_string(),
+                parameters: serde_json::json!({"type": "object", "properties": {}}),
             },
         ]
     }
@@ -156,29 +187,30 @@ impl IntelligenceManager {
         Ok(Vec::new())
     }
 
-    /// Get context tree for session
+    /// Get context tree for session (Phase 3 implementation)
     pub async fn get_context_tree(&self, session_id: &str) -> AriaResult<ExecutionContext> {
-        // Phase 1 implementation - basic context tree structure
-        // Full implementation will be in Phase 3
+        info!("Building context tree for session: {}", session_id);
         
-        let context = ExecutionContext {
-            context_id: format!("session_{}", session_id),
-            session_id: session_id.to_string(),
-            context_type: ContextType::Session,
-            parent_id: None,
-            context_data: serde_json::json!({
-                "session_id": session_id,
-                "created_at": current_timestamp(),
-                "status": "active"
-            }),
-            priority: 10,
-            children: Vec::new(),
-            metadata: ContextMetadata::default(),
-            created_at: current_timestamp(),
-            updated_at: current_timestamp(),
-        };
+        // Use ExecutionContextBuilder to build full context tree
+        self.context_builder.build_context_tree(session_id).await
+    }
 
-        Ok(context)
+    /// Get context formatted for agent prompts (Phase 3)
+    pub async fn get_context_for_prompt(&self, session_id: &str, max_nodes: Option<usize>) -> AriaResult<String> {
+        info!("Getting context for prompt for session: {}", session_id);
+        
+        self.context_builder.get_context_for_prompt(session_id, max_nodes).await
+    }
+
+    /// Get context cache statistics (Phase 3)
+    pub async fn get_context_cache_stats(&self) -> AriaResult<crate::engines::intelligence::context_builder::ContextCacheStats> {
+        self.context_builder.get_cache_stats().await
+    }
+
+    /// Clear context cache (Phase 3)
+    pub async fn clear_context_cache(&self) -> AriaResult<()> {
+        info!("Clearing context cache");
+        self.context_builder.clear_cache().await
     }
 
     // Private helper methods
@@ -309,6 +341,24 @@ impl IntelligenceManager {
                     "default": 30
                 }
             }
+        })
+    }
+
+    fn get_context_prompt_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "session_id": {
+                    "type": "string",
+                    "description": "Session ID to get context for"
+                },
+                "max_nodes": {
+                    "type": "integer",
+                    "description": "Maximum context nodes to include in prompt",
+                    "default": 50
+                }
+            },
+            "required": ["session_id"]
         })
     }
 

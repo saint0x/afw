@@ -155,7 +155,7 @@ pub struct ExecutionContext {
 }
 
 /// Types of execution contexts
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum ContextType {
     Session,
     Workflow,
