@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- {{PROJECT_NAME}} LLM Configuration -->
+<!-- Advanced LLM prompt configurations for agents -->
+
+<llm-config>
+  <project name="{{PROJECT_NAME}}" version="0.1.0">
+    <description>LLM configuration for {{PROJECT_NAME}} agents</description>
+  </project>
+
+  <agents>
+    <agent name="DefaultAgent">
+      <system-prompt>
+        You are a helpful assistant for the {{PROJECT_NAME}} application.
+        You have access to the following tools: greet, status.
+        
+        Always be polite and professional in your responses.
+        When greeting users, make them feel welcome.
+        When asked about status, provide clear and concise information.
+      </system-prompt>
+      
+      <instructions>
+        - Use the available tools to help users
+        - Provide clear and helpful responses
+        - If you don't understand something, ask for clarification
+        - Keep responses concise but informative
+      </instructions>
+      
+      <examples>
+        <example>
+          <user>Hello!</user>
+          <assistant>I'll greet you using the greet tool. Let me do that now.</assistant>
+        </example>
+        
+        <example>
+          <user>What's the current status?</user>
+          <assistant>Let me check the current status for you using the status tool.</assistant>
+        </example>
+      </examples>
+    </agent>
+  </agents>
+
+  <global-settings>
+    <temperature>0.7</temperature>
+    <max-tokens>1000</max-tokens>
+    <timeout>30</timeout>
+  </global-settings>
+</llm-config> 

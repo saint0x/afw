@@ -1,9 +1,9 @@
 pub mod typescript;
 pub mod schema;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use std::path::{Path, PathBuf};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use serde::{Serialize, Deserialize};
 use std::sync::Arc;
 use swc_core::common::{SourceMap, sync::Lrc};
@@ -11,6 +11,7 @@ use swc_core::common::{SourceMap, sync::Lrc};
 use self::typescript::TypeScriptCompiler;
 use self::typescript::visitor::ExtractedItem;
 use crate::compiler::schema::{AgentManifest, ToolManifest, AriaManifest, TeamManifest, PipelineManifest};
+use crate::bundle::AriaBundle;
 
 /// Main Aria compiler that orchestrates the compilation process
 pub struct AriaCompiler {
@@ -93,20 +94,25 @@ impl AriaCompiler {
         // 4. Generate manifest
         let manifest = self.generate_manifest(&implementations)?;
         
-        // 5. Get metrics before moving implementations
+        // 5. Validate cross-references
+        if let Err(e) = self.validate_cross_references(&manifest) {
+            return Err(e);
+        }
+        
+        // 6. Get metrics before moving implementations
         let source_files_count = compiled_code_map.len();
         
-        // 6. Create bundle (this consumes implementations)
-        let bundle = crate::bundle::AriaBundle::create(
+        // 7. Create bundle (this consumes implementations)
+        let mut bundle = AriaBundle::create(
             manifest,
             implementations,
             compiled_code_map,
         )?;
         
-        // 7. Write to output
+        // 8. Write to output
         bundle.save_to_file(output_path).await?;
         
-        // 8. Calculate metrics
+        // 9. Calculate metrics
         let compilation_time = start_time.elapsed();
         let bundle_size = tokio::fs::metadata(output_path).await?.len();
         
@@ -137,7 +143,7 @@ impl AriaCompiler {
             // Directory - find all TypeScript files
             sources = discover_typescript_files(path).await?;
         } else {
-            return Err(anyhow::anyhow!("Input path does not exist: {}", input_path));
+            return Err(anyhow!("Input path does not exist: {}", input_path));
         }
         
         Ok(sources)
@@ -227,6 +233,11 @@ impl AriaCompiler {
         // 4. Generate manifest
         let manifest = self.generate_manifest(&implementations)?;
         
+        // 5. Validate cross-references
+        if let Err(e) = self.validate_cross_references(&manifest) {
+            return Err(e);
+        }
+        
         let compilation_time = start_time.elapsed();
         
         Ok(CompilationResult {
@@ -241,6 +252,48 @@ impl AriaCompiler {
             compression_ratio: 0.0, // Not applicable
             warnings,
         })
+    }
+
+    /// Validates that all cross-references within the manifest are valid.
+    /// For example, ensures that agents only reference tools that are actually defined.
+    fn validate_cross_references(&self, manifest: &AriaManifest) -> Result<()> {
+        let mut errors = Vec::new();
+
+        // --- Tool validation ---
+        let defined_tools: HashSet<_> = manifest.tools.iter().map(|t| &t.name).collect();
+
+        for agent in &manifest.agents {
+            for tool_name in &agent.tools {
+                if !defined_tools.contains(tool_name) {
+                    errors.push(format!(
+                        "Agent '{}' references undefined tool: '{}'",
+                        agent.name, tool_name
+                    ));
+                }
+            }
+        }
+
+        // --- (Future) Team validation ---
+        // let defined_agents: HashSet<_> = manifest.agents.iter().map(|a| &a.name).collect();
+        // for team in &manifest.teams {
+        //     for agent_name in &team.agents {
+        //         if !defined_agents.contains(agent_name) {
+        //             errors.push(format!(
+        //                 "Team '{}' references undefined agent: '{}'",
+        //                 team.name, agent_name
+        //             ));
+        //         }
+        //     }
+        // }
+
+        if !errors.is_empty() {
+            return Err(anyhow!(
+                "Cross-reference validation failed:\n - {}",
+                errors.join("\n - ")
+            ));
+        }
+
+        Ok(())
     }
 }
 

@@ -4,10 +4,11 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use zip::{ZipWriter, ZipArchive};
-use std::io::Write;
+use std::io::{Cursor, Write};
 use std::fs::File;
 use zip::write::{FileOptions};
 use zip::CompressionMethod;
+use blake3;
 
 use crate::compiler::{Implementation, ImplementationDetails};
 use crate::compiler::schema::{AriaManifest, AgentManifest};
@@ -43,25 +44,60 @@ impl AriaBundle {
         })
     }
     
-    /// Save bundle to a .aria file (ZIP format)
-    pub async fn save_to_file(&self, path: &PathBuf) -> Result<()> {
+    /// Save bundle to a .aria file (ZIP format) with a Blake3 hash
+    pub async fn save_to_file(&mut self, path: &PathBuf) -> Result<()> {
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).await?;
         }
+
+        // --- Step 1: Create the main bundle in-memory ---
+        let mut bundle_data = Vec::new();
+        let cursor = Cursor::new(&mut bundle_data);
+        let mut zip = ZipWriter::new(cursor);
         
-        let file = std::fs::File::create(path)?;
-        let mut zip = ZipWriter::new(file);
-        
-        // Add manifest.json
         let options: FileOptions<'_, ()> = FileOptions::default()
             .compression_method(CompressionMethod::Deflated)
             .unix_permissions(0o755);
         
+        // Add manifest.json
         zip.start_file("manifest.json", options)?;
         let manifest_json = serde_json::to_string_pretty(&self.manifest)?;
         zip.write_all(manifest_json.as_bytes())?;
         
+        // Add implementation files
+        self.write_implementations(&mut zip, options)?;
+        
+        // Add package.json for dependencies
+        let package_json = self.generate_package_json();
+        zip.start_file("package.json", options)?;
+        zip.write_all(package_json.as_bytes())?;
+        
+        // --- Step 2: Calculate Blake3 hash of the main bundle ---
+        zip.finish()?;
+        let hash = blake3::hash(&bundle_data);
+        self.metadata.build_hash = hash.to_hex().to_string();
+
+        // --- Step 3: Create the final file with metadata and the zipped bundle ---
+        let file = std::fs::File::create(path)?;
+        let mut final_zip = ZipWriter::new(file);
+
+        // Add metadata/build.json
+        final_zip.start_file("metadata/build.json", options)?;
+        let metadata_json = serde_json::to_string_pretty(&self.metadata)?;
+        final_zip.write_all(metadata_json.as_bytes())?;
+        
+        // Add the main bundle as a single, raw file
+        final_zip.start_file("bundle.zip", options)?;
+        final_zip.write_all(&bundle_data)?;
+
+        final_zip.finish()?;
+        
+        Ok(())
+    }
+
+    /// Helper to write implementation files to the zip archive
+    fn write_implementations(&self, zip: &mut ZipWriter<Cursor<&mut Vec<u8>>>, options: FileOptions<()>) -> Result<()> {
         // --- Re-Export Strategy ---
         // 1. Write all unique, transpiled source files to a `_sources` directory.
         zip.add_directory("implementations/_sources", options)?;
@@ -97,19 +133,6 @@ impl AriaBundle {
                 zip.write_all(re_export_content.as_bytes())?;
             }
         }
-        
-        // Add package.json for dependencies
-        let package_json = self.generate_package_json();
-        zip.start_file("package.json", options)?;
-        zip.write_all(package_json.as_bytes())?;
-        
-        // Add metadata
-        zip.start_file("metadata/build.json", options)?;
-        let metadata_json = serde_json::to_string_pretty(&self.metadata)?;
-        zip.write_all(metadata_json.as_bytes())?;
-        
-        zip.finish()?;
-        
         Ok(())
     }
     
@@ -118,18 +141,7 @@ impl AriaBundle {
         let file = std::fs::File::open(path)?;
         let mut archive = ZipArchive::new(file)?;
         
-        // Read manifest
-        let manifest = {
-            let mut manifest_file = archive.by_name("manifest.json")?;
-            let mut manifest_content = String::new();
-            std::io::Read::read_to_string(&mut manifest_file, &mut manifest_content)?;
-            serde_json::from_str::<AriaManifest>(&manifest_content)?
-        };
-        
-        // Read implementations (basic loading for now)
-        let implementations = HashMap::new();
-        
-        // Try to read metadata
+        // Read metadata first
         let metadata = match archive.by_name("metadata/build.json") {
             Ok(mut metadata_file) => {
                 let mut metadata_content = String::new();
@@ -138,6 +150,33 @@ impl AriaBundle {
             }
             Err(_) => BundleMetadata::new(),
         };
+
+        // Extract the main bundle zip from the archive
+        let mut bundle_zip_reader = archive.by_name("bundle.zip")?;
+        let mut bundle_data = Vec::new();
+        std::io::Read::read_to_end(&mut bundle_zip_reader, &mut bundle_data)?;
+
+        // Verify hash if present
+        if !metadata.build_hash.is_empty() {
+            let expected_hash = blake3::hash(&bundle_data);
+            if expected_hash.to_hex().to_string() != metadata.build_hash {
+                anyhow::bail!("Bundle integrity check failed: blake3 hash mismatch");
+            }
+        }
+        
+        // Now, read from the in-memory bundle data
+        let mut bundle_archive = ZipArchive::new(Cursor::new(bundle_data))?;
+
+        // Read manifest
+        let manifest = {
+            let mut manifest_file = bundle_archive.by_name("manifest.json")?;
+            let mut manifest_content = String::new();
+            std::io::Read::read_to_string(&mut manifest_file, &mut manifest_content)?;
+            serde_json::from_str::<AriaManifest>(&manifest_content)?
+        };
+        
+        // Read implementations (basic loading for now)
+        let implementations = HashMap::new();
         
         Ok(Self {
             manifest,

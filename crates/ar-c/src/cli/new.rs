@@ -1,339 +1,168 @@
 use clap::ArgMatches;
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, Context};
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
-use crate::cli::{print_status, print_info};
+use crate::cli::{print_status, print_info, print_error};
 
-/// Handle the 'arc new' command
+/// Handle the 'arc new' command according to NEWSDK.md specification
 pub async fn handle_new_command(matches: &ArgMatches) -> Result<()> {
     let project_name = matches.get_one::<String>("name").unwrap();
-    let template = matches.get_one::<String>("template").unwrap();
+    let template = matches.get_one::<String>("template").map(|s| s.as_str()).unwrap_or("basic");
     
     print_info(&format!("Creating new Aria project: {}", project_name));
-    print_info(&format!("Using template: {}", template));
+    
+    // Validate project name
+    if !is_valid_project_name(project_name) {
+        return Err(anyhow!("Invalid project name: '{}'. Project names must be valid directory names", project_name));
+    }
     
     // Check if directory already exists
     if Path::new(project_name).exists() {
         return Err(anyhow!("Directory '{}' already exists", project_name));
     }
     
-    // Create project directory
-    fs::create_dir_all(project_name)?;
-    
-    match template.as_str() {
-        "basic" => create_basic_template(project_name).await?,
-        "sdk" => create_sdk_template(project_name).await?,
-        "advanced" => create_advanced_template(project_name).await?,
-        _ => return Err(anyhow!("Unknown template: {}", template)),
-    }
+    // Create project according to NEWSDK.md standard structure
+    create_project_structure(project_name, template).await?;
     
     print_status("Created", &format!("Aria project '{}'", project_name));
     print_info("Next steps:");
     println!("    cd {}", project_name);
-    println!("    arc build ./src");
+    println!("    bun install");
+    println!("    arc check");
+    println!("    arc build");
     
     Ok(())
 }
 
-/// Create basic project template
-async fn create_basic_template(project_name: &str) -> Result<()> {
+/// Create the standard project structure as defined in NEWSDK.md
+async fn create_project_structure(project_name: &str, _template: &str) -> Result<()> {
     let base_path = Path::new(project_name);
     
-    // Create directory structure
-    fs::create_dir_all(base_path.join("src"))?;
-    fs::create_dir_all(base_path.join("dist"))?;
+    // TODO: Use template parameter for different project variations in the future
+    // For now, we only support the standard NEWSDK.md structure
     
-    // Create aria.toml
-    let aria_toml = format!(r#"[project]
-name = "{}"
-version = "0.1.0"
-description = "An Aria agentic application"
-
-[build]
-output = "dist/{}.aria"
-target = "typescript"
-
-[runtime]
-bun_version = "latest"
-"#, project_name, project_name);
+    // Create standard directory structure from NEWSDK.md:
+    // my-aria-project/
+    // ├── src/
+    // │   └── main.ts
+    // ├── config/
+    // │   ├── package.json
+    // │   └── symphony.config.ts
+    // └── llm.xml
     
-    fs::write(base_path.join("aria.toml"), aria_toml)?;
+    fs::create_dir_all(base_path.join("src"))
+        .context("Failed to create src/ directory")?;
     
-    // Create package.json
-    let package_json = format!(r#"{{
-  "name": "{}",
-  "version": "0.1.0",
-  "description": "An Aria agentic application",
-  "main": "src/index.ts",
-  "scripts": {{
-    "build": "arc build ./src",
-    "dev": "arc build ./src --watch"
-  }},
-  "dependencies": {{
-    "@aria/sdk": "^0.1.0"
-  }},
-  "devDependencies": {{
-    "typescript": "^5.0.0",
-    "@types/node": "^20.0.0"
-  }}
-}}
-"#, project_name);
+    fs::create_dir_all(base_path.join("config"))
+        .context("Failed to create config/ directory")?;
     
-    fs::write(base_path.join("package.json"), package_json)?;
+    // Generate project class name (PascalCase from kebab-case)
+    let project_class_name = to_pascal_case(project_name);
     
-    // Create basic TypeScript file
-    let index_ts = r#"import { tool } from '@aria/sdk';
-
-@tool({
-  name: "greet",
-  description: "Simple greeting tool",
-  inputs: { name: "string" },
-  outputs: { message: "string" }
-})
-export async function greet(params: { name: string }) {
-  return {
-    message: `Hello, ${params.name}! Welcome to Aria.`
-  };
-}
-"#;
+    // Create src/main.ts from template
+    create_file_from_template(
+        &base_path.join("src/main.ts"),
+        include_str!("../templates/main.ts.template"),
+        project_name,
+        &project_class_name
+    )?;
     
-    fs::write(base_path.join("src/index.ts"), index_ts)?;
+    // Create config/package.json from template
+    create_file_from_template(
+        &base_path.join("config/package.json"),
+        include_str!("../templates/package.json.template"),
+        project_name,
+        &project_class_name
+    )?;
     
-    // Create tsconfig.json
-    let tsconfig = r#"{
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "node",
-    "strict": true,
-    "experimentalDecorators": true,
-    "emitDecoratorMetadata": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "outDir": "./dist",
-    "rootDir": "./src"
-  },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
-}
-"#;
+    // Create config/symphony.config.ts from template
+    create_file_from_template(
+        &base_path.join("config/symphony.config.ts"),
+        include_str!("../templates/symphony.config.ts.template"),
+        project_name,
+        &project_class_name
+    )?;
     
-    fs::write(base_path.join("tsconfig.json"), tsconfig)?;
+    // Create llm.xml from template (optional but included by default)
+    create_file_from_template(
+        &base_path.join("llm.xml"),
+        include_str!("../templates/llm.xml.template"),
+        project_name,
+        &project_class_name
+    )?;
     
-    // Create README.md
-    let readme = format!(r#"# {}
-
-An Aria agentic application built with TypeScript SDK.
-
-## Getting Started
-
-1. Install dependencies:
-   ```bash
-   npm install
-   ```
-
-2. Build the project:
-   ```bash
-   arc build ./src
-   ```
-
-3. The compiled `.aria` bundle will be in the `dist/` directory.
-
-## Project Structure
-
-- `src/` - TypeScript source files with Aria decorators
-- `dist/` - Compiled `.aria` bundles
-- `aria.toml` - Project configuration
-- `tsconfig.json` - TypeScript configuration
-
-## Available Tools
-
-- `greet` - Simple greeting tool
-
-## Learn More
-
-- [Aria Documentation](https://aria.dev/docs)
-- [TypeScript SDK Guide](https://aria.dev/sdk)
-"#, project_name);
-    
-    fs::write(base_path.join("README.md"), readme)?;
+    // Initialize git repository as specified in NEWSDK.md
+    init_git_repository(base_path)?;
     
     Ok(())
 }
 
-/// Create SDK template (more advanced with multiple tools/agents)
-async fn create_sdk_template(project_name: &str) -> Result<()> {
-    // Create basic template first
-    create_basic_template(project_name).await?;
+/// Create a file from template, replacing placeholders
+fn create_file_from_template(
+    file_path: &Path,
+    template_content: &str,
+    project_name: &str,
+    project_class_name: &str
+) -> Result<()> {
+    let content = template_content
+        .replace("{{PROJECT_NAME}}", project_name)
+        .replace("{{PROJECT_CLASS_NAME}}", project_class_name);
     
-    let base_path = Path::new(project_name);
+    fs::write(file_path, content)
+        .with_context(|| format!("Failed to create file: {}", file_path.display()))?;
     
-    // Create additional directories
-    fs::create_dir_all(base_path.join("src/tools"))?;
-    fs::create_dir_all(base_path.join("src/agents"))?;
-    
-    // Create a sample tool
-    let sample_tool = r#"import { tool } from '@aria/sdk';
-
-@tool({
-  name: "calculateSum",
-  description: "Calculate the sum of two numbers",
-  inputs: { 
-    a: "number", 
-    b: "number" 
-  },
-  outputs: { 
-    sum: "number" 
-  }
-})
-export async function calculateSum(params: { a: number; b: number }) {
-  return {
-    sum: params.a + params.b
-  };
+    Ok(())
 }
 
-@tool({
-  name: "validateEmail",
-  description: "Validate email address format",
-  inputs: { email: "string" },
-  outputs: { valid: "boolean", error?: "string" }
-})
-export async function validateEmail(params: { email: string }) {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  const valid = emailRegex.test(params.email);
-  
-  return {
-    valid,
-    error: valid ? undefined : "Invalid email format"
-  };
-}
-"#;
+/// Initialize git repository as specified in NEWSDK.md
+fn init_git_repository(project_path: &Path) -> Result<()> {
+    let output = Command::new("git")
+        .arg("init")
+        .current_dir(project_path)
+        .output();
     
-    fs::write(base_path.join("src/tools/utilities.ts"), sample_tool)?;
-    
-    // Create a sample agent
-    let sample_agent = r#"import { agent, tool } from '@aria/sdk';
-
-@agent({
-  name: "MathAssistant",
-  description: "Helpful assistant for mathematical operations",
-  capabilities: ["calculateSum", "validateEmail"]
-})
-export class MathAssistant {
-  @tool({
-    name: "solveEquation",
-    description: "Solve simple linear equations",
-    inputs: { equation: "string" },
-    outputs: { result: "number", steps: "string[]" }
-  })
-  async solveEquation(params: { equation: string }) {
-    // Simple implementation for demonstration
-    // In practice, this would be more sophisticated
-    const steps = [`Parsing equation: ${params.equation}`];
-    
-    // Very basic parsing for x + n = m format
-    const match = params.equation.match(/x\s*\+\s*(\d+)\s*=\s*(\d+)/);
-    if (match) {
-      const n = parseInt(match[1]);
-      const m = parseInt(match[2]);
-      const result = m - n;
-      steps.push(`Subtract ${n} from both sides`);
-      steps.push(`x = ${m} - ${n}`);
-      steps.push(`x = ${result}`);
-      
-      return { result, steps };
+    match output {
+        Ok(output) if output.status.success() => {
+            print_info("Initialized git repository");
+        },
+        Ok(output) => {
+            print_error(&format!(
+                "Failed to initialize git repository: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        },
+        Err(_) => {
+            print_error("Git not found - skipping repository initialization");
+        }
     }
     
-    throw new Error("Unsupported equation format");
-  }
-  
-  private formatSteps(steps: string[]): string[] {
-    return steps.map((step, i) => `${i + 1}. ${step}`);
-  }
-}
-"#;
-    
-    fs::write(base_path.join("src/agents/MathAssistant.ts"), sample_agent)?;
-    
-    // Update index.ts to export everything
-    let index_ts = r#"// Export all tools
-export * from './tools/utilities';
-
-// Export all agents  
-export * from './agents/MathAssistant';
-
-// Main greeting tool
-import { tool } from '@aria/sdk';
-
-@tool({
-  name: "greet",
-  description: "Simple greeting tool",
-  inputs: { name: "string" },
-  outputs: { message: "string" }
-})
-export async function greet(params: { name: string }) {
-  return {
-    message: `Hello, ${params.name}! Welcome to Aria SDK.`
-  };
-}
-"#;
-    
-    fs::write(base_path.join("src/index.ts"), index_ts)?;
-    
     Ok(())
 }
 
-/// Create advanced template (with teams, complex workflows)
-async fn create_advanced_template(project_name: &str) -> Result<()> {
-    // Create SDK template first
-    create_sdk_template(project_name).await?;
-    
-    let base_path = Path::new(project_name);
-    
-    // Create additional directories
-    fs::create_dir_all(base_path.join("src/teams"))?;
-    fs::create_dir_all(base_path.join("src/workflows"))?;
-    
-    // Create a sample team
-    let sample_team = r#"import { team } from '@aria/sdk';
-import { MathAssistant } from '../agents/MathAssistant';
-
-@team({
-  name: "AnalyticsTeam",
-  description: "Team of agents working together on data analysis",
-  agents: ["MathAssistant", "DataProcessor"],
-  workflow: "collaborative"
-})
-export class AnalyticsTeam {
-  private mathAssistant: MathAssistant;
-  
-  constructor() {
-    this.mathAssistant = new MathAssistant();
-  }
-  
-  async processDataSet(data: number[]): Promise<{
-    sum: number;
-    average: number;
-    analysis: string;
-  }> {
-    // Team coordination logic would go here
-    const sum = data.reduce((a, b) => a + b, 0);
-    const average = sum / data.length;
-    
-    return {
-      sum,
-      average,
-      analysis: `Processed ${data.length} data points. Sum: ${sum}, Average: ${average.toFixed(2)}`
-    };
-  }
+/// Validate project name
+fn is_valid_project_name(name: &str) -> bool {
+    !name.is_empty() 
+        && !name.starts_with('.') 
+        && !name.contains('/') 
+        && !name.contains('\\')
+        && name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_')
 }
-"#;
-    
-    fs::write(base_path.join("src/teams/AnalyticsTeam.ts"), sample_team)?;
-    
-    print_info("Advanced template includes teams and workflows");
-    
-    Ok(())
+
+/// Convert kebab-case to PascalCase
+fn to_pascal_case(s: &str) -> String {
+    s.split('-')
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(first) => {
+                    let mut result = first.to_uppercase().collect::<String>();
+                    result.push_str(&chars.as_str().to_lowercase());
+                    result
+                }
+            }
+        })
+        .collect()
 } 

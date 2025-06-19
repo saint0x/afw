@@ -1,0 +1,22 @@
+{
+  "name": "{{PROJECT_NAME}}",
+  "version": "0.1.0",
+  "description": "An Aria agentic application",
+  "type": "module",
+  "main": "../src/main.ts",
+  "scripts": {
+    "build": "arc build",
+    "check": "arc check",
+    "dev": "arc build --watch"
+  },
+  "dependencies": {
+    "@aria/sdk": "^0.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  }
+} 
