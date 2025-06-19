@@ -20,7 +20,6 @@ use quilt::{
 };
 
 use crate::cli::{print_status, print_info, print_error};
-use crate::bundle::AriaBundle;
 
 const DEFAULT_QUILT_SOCKET: &str = "/run/quilt/api.sock";
 const CHUNK_SIZE: usize = 64 * 1024; // 64KB chunks

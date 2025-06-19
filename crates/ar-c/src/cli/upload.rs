@@ -44,7 +44,7 @@ async fn upload_bundle_to_quilt(bundle_path: &str, socket_path: &str) -> Result<
                 progress.bytes_uploaded as f64 / (1024.0 * 1024.0),
                 progress.total_bytes as f64 / (1024.0 * 1024.0)
             ));
-        }
+                    }
     }).await?;
     
     if result.success {
