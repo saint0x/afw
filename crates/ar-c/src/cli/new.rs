@@ -32,6 +32,7 @@ pub async fn handle_new_command(matches: &ArgMatches) -> Result<()> {
     println!("    bun install");
     println!("    arc check");
     println!("    arc build");
+    println!("    arc upload dist/{}.aria", project_name);
     
     Ok(())
 }
@@ -48,8 +49,8 @@ async fn create_project_structure(project_name: &str, _template: &str) -> Result
     // ├── src/
     // │   └── main.ts
     // ├── config/
-    // │   ├── package.json
-    // │   └── symphony.config.ts
+    // │   └── package.json
+    // ├── aria.toml
     // └── llm.xml
     
     fs::create_dir_all(base_path.join("src"))
@@ -77,10 +78,10 @@ async fn create_project_structure(project_name: &str, _template: &str) -> Result
         &project_class_name
     )?;
     
-    // Create config/symphony.config.ts from template
+    // Create aria.toml from template
     create_file_from_template(
-        &base_path.join("config/symphony.config.ts"),
-        include_str!("../templates/symphony.config.ts.template"),
+        &base_path.join("aria.toml"),
+        include_str!("../templates/aria.toml.template"),
         project_name,
         &project_class_name
     )?;
