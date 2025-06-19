@@ -5,18 +5,12 @@ use anyhow::Result;
 use std::fs;
 use std::process::{Command, Stdio};
 use std::io::{BufRead, BufReader};
-use tempfile::Builder;
 use std::env;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    println!("🚀 Testing Aria `new -> check -> build -> upload` Workflow");
-    println!("======================================================\n");
-
     let start_time = std::time::Instant::now();
-    let temp_dir = Builder::new().prefix("arc-e2e-").tempdir()?;
     let project_name = "e2e-test-project";
-    let project_path = temp_dir.path().join(project_name);
 
     // Get the workspace root (aria-fw directory)
     let current_dir = env::current_dir()?;
@@ -25,16 +19,29 @@ async fn main() -> Result<()> {
     } else {
         current_dir
     };
+    let project_path = workspace_root.join(project_name);
+
+    println!("🚀 Testing Aria `new -> check -> build -> upload` Workflow");
+    println!("======================================================");
+    println!("📁 Test project will be created at: {}", project_path.display());
+    println!();
     let ar_c_manifest = workspace_root.join("crates/ar-c/Cargo.toml");
 
     // --- Step 1: `arc new` ---
     println!("1️⃣  Running `arc new`...");
+    
+    // Clean up any existing test project
+    if project_path.exists() {
+        println!("   Cleaning up existing test project...");
+        fs::remove_dir_all(&project_path)?;
+    }
+    
     let new_output = Command::new("cargo")
         .args(&[
             "run", "--manifest-path", ar_c_manifest.to_str().unwrap(), "--quiet", "--",
             "new", project_name,
         ])
-        .current_dir(temp_dir.path())
+        .current_dir(&workspace_root)
         .output()?;
 
     if !new_output.status.success() {
@@ -172,6 +179,8 @@ async fn main() -> Result<()> {
 
     let total_time = start_time.elapsed();
     println!("🎉 End-to-end test completed in {:.2}s", total_time.as_secs_f64());
+    println!("📁 Test project remains at: {}", project_path.display());
+    println!("   To clean up, run: rm -rf {}", project_path.display());
 
     Ok(())
 } 
