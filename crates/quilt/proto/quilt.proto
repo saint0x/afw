@@ -36,6 +36,18 @@ service QuiltService {
     rpc GetNetworkTopology (GetNetworkTopologyRequest) returns (GetNetworkTopologyResponse);
     // Gets detailed network information for a specific container
     rpc GetContainerNetworkInfo (GetContainerNetworkInfoRequest) returns (GetContainerNetworkInfoResponse);
+    
+    // Bundle management operations
+    // Uploads an .aria bundle to the package store (streaming for large files)
+    rpc UploadBundle (stream UploadBundleRequest) returns (UploadBundleResponse);
+    // Gets information about a specific bundle
+    rpc GetBundleInfo (GetBundleInfoRequest) returns (GetBundleInfoResponse);
+    // Lists all stored bundles with optional filtering
+    rpc ListBundles (ListBundlesRequest) returns (ListBundlesResponse);
+    // Deletes a bundle from storage
+    rpc DeleteBundle (DeleteBundleRequest) returns (DeleteBundleResponse);
+    // Validates a bundle without storing it
+    rpc ValidateBundle (ValidateBundleRequest) returns (ValidateBundleResponse);
 }
 
 // Container status enumeration
@@ -56,6 +68,17 @@ enum TaskStatus {
     TASK_FAILED = 4;        // Task failed with error
     TASK_CANCELLED = 5;     // Task was cancelled
     TASK_TIMEOUT = 6;       // Task exceeded timeout limit
+}
+
+// Bundle status enumeration
+enum BundleStatus {
+    BUNDLE_UNSPECIFIED = 0;    // Default value, indicates no filter
+    BUNDLE_UPLOADING = 1;      // Bundle is being uploaded
+    BUNDLE_VALIDATING = 2;     // Bundle is being validated
+    BUNDLE_STORED = 3;         // Bundle is successfully stored
+    BUNDLE_DEPLOYED = 4;       // Bundle is deployed and available
+    BUNDLE_FAILED = 5;         // Bundle upload or validation failed
+    BUNDLE_CORRUPTED = 6;      // Bundle failed integrity checks
 }
 
 message CreateContainerRequest {
@@ -290,4 +313,138 @@ message GetContainerNetworkInfoResponse {
     string veth_container = 5;
     bool setup_completed = 6;
     string status = 7;
+}
+
+// Bundle management messages
+
+message UploadBundleRequest {
+    oneof payload {
+        BundleMetadata metadata = 1;                // First message: bundle metadata and info
+        bytes chunk = 2;                           // Subsequent messages: bundle data chunks
+        string checksum = 3;                       // Final message: blake3 checksum for verification
+    }
+}
+
+message BundleMetadata {
+    string name = 1;                               // Bundle name from manifest
+    string version = 2;                            // Bundle version
+    string description = 3;                        // Bundle description (optional)
+    uint64 total_size_bytes = 4;                  // Total bundle size in bytes
+    uint32 chunk_size_bytes = 5;                  // Size of data chunks to follow
+    string blake3_hash = 6;                        // Expected blake3 hash of complete bundle
+    string signature = 7;                         // Ed25519 signature (optional, for AUTH.MD integration)
+    string uploader_identity = 8;                 // Identity of uploader (optional, for AUTH.MD)
+    map<string, string> metadata_fields = 9;      // Additional metadata fields
+}
+
+message UploadBundleResponse {
+    bool success = 1;                              // Whether upload was successful
+    string bundle_id = 2;                          // Generated bundle ID (blake3 hash)
+    string error_message = 3;                      // Error message if upload failed
+    BundleStatus status = 4;                       // Final status of the bundle
+    uint64 bytes_received = 5;                     // Total bytes received
+    double upload_time_seconds = 6;               // Total upload time
+    BundleInfo bundle_info = 7;                    // Bundle information after successful upload
+}
+
+message GetBundleInfoRequest {
+    string bundle_id = 1;                          // Bundle ID to query
+}
+
+message GetBundleInfoResponse {
+    bool success = 1;                              // Whether bundle was found
+    string error_message = 2;                      // Error message if bundle not found
+    BundleInfo bundle_info = 3;                    // Bundle information
+}
+
+message BundleInfo {
+    string bundle_id = 1;                          // Bundle ID (blake3 hash)
+    string name = 2;                               // Bundle name
+    string version = 3;                            // Bundle version
+    string description = 4;                        // Bundle description
+    BundleStatus status = 5;                       // Current bundle status
+    uint64 size_bytes = 6;                         // Bundle size in bytes
+    uint64 uploaded_at = 7;                        // Upload timestamp (unix timestamp)
+    string uploader_identity = 8;                  // Identity of uploader
+    BundleManifest manifest = 9;                   // Parsed bundle manifest
+    BundleValidation validation = 10;              // Validation results
+}
+
+message BundleManifest {
+    string name = 1;                               // Manifest name
+    string version = 2;                            // Manifest version
+    repeated ToolInfo tools = 3;                   // Tools defined in bundle
+    repeated AgentInfo agents = 4;                 // Agents defined in bundle
+    repeated TeamInfo teams = 5;                   // Teams defined in bundle
+    repeated PipelineInfo pipelines = 6;           // Pipelines defined in bundle
+}
+
+message ToolInfo {
+    string name = 1;                               // Tool name
+    string description = 2;                        // Tool description
+    map<string, string> inputs = 3;               // Tool input schema
+    map<string, string> outputs = 4;              // Tool output schema (optional)
+}
+
+message AgentInfo {
+    string name = 1;                               // Agent name
+    string description = 2;                        // Agent description
+    repeated string tools = 3;                     // Tools used by this agent
+}
+
+message TeamInfo {
+    string name = 1;                               // Team name
+    string description = 2;                        // Team description
+    repeated string members = 3;                   // Agent members of this team
+}
+
+message PipelineInfo {
+    string name = 1;                               // Pipeline name
+    string description = 2;                        // Pipeline description
+}
+
+message BundleValidation {
+    bool signature_valid = 1;                      // Whether signature is valid
+    bool checksum_valid = 2;                       // Whether checksum matches
+    bool manifest_valid = 3;                       // Whether manifest is valid
+    bool dependencies_satisfied = 4;               // Whether all dependencies are satisfied
+    repeated string validation_errors = 5;         // List of validation errors
+    repeated string validation_warnings = 6;       // List of validation warnings
+}
+
+message ListBundlesRequest {
+    BundleStatus status_filter = 1;                // Optional filter by bundle status
+    string name_filter = 2;                        // Optional filter by bundle name (partial match)
+    uint32 limit = 3;                              // Maximum number of bundles to return (0 = no limit)
+    uint32 offset = 4;                             // Offset for pagination
+}
+
+message ListBundlesResponse {
+    repeated BundleInfo bundles = 1;               // List of bundles
+    uint32 total_count = 2;                        // Total number of bundles (for pagination)
+    bool has_more = 3;                             // Whether there are more bundles available
+}
+
+message DeleteBundleRequest {
+    string bundle_id = 1;                          // Bundle ID to delete
+    bool force = 2;                                // Force deletion even if deployed
+}
+
+message DeleteBundleResponse {
+    bool success = 1;                              // Whether deletion was successful
+    string error_message = 2;                      // Error message if deletion failed
+}
+
+message ValidateBundleRequest {
+    bytes bundle_data = 1;                         // Bundle data to validate (for small bundles)
+    string bundle_path = 2;                        // Path to bundle file (alternative to bundle_data)
+    bool check_signature = 3;                      // Whether to verify signature
+    bool check_dependencies = 4;                   // Whether to check dependencies
+}
+
+message ValidateBundleResponse {
+    bool success = 1;                              // Whether validation passed
+    string error_message = 2;                      // Error message if validation failed
+    BundleValidation validation = 3;               // Detailed validation results
+    BundleManifest manifest = 4;                   // Parsed manifest (if validation succeeded)
 } 

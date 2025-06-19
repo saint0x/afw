@@ -7,13 +7,14 @@ use daemon::{ContainerConfig, CgroupLimits, NamespaceConfig};
 use utils::console::ConsoleLogger;
 use sync::{SyncEngine, containers::ContainerState};
 
-use std::sync::Arc;
 use std::collections::HashMap;
 use std::time::Duration;
 use tonic::{transport::Server, Request, Response, Status};
 use uuid::Uuid;
 use sqlx::Row;
 use std::env;
+use std::sync::Arc;
+use pkg_store::PackageStore;
 
 // Include the generated protobuf code
 pub mod quilt {
@@ -37,12 +38,24 @@ use quilt::{
     GetTaskResultRequest, GetTaskResultResponse,
     ListTasksRequest, ListTasksResponse, TaskInfo,
     CancelTaskRequest, CancelTaskResponse,
+    // Bundle upload types
+    UploadBundleRequest, UploadBundleResponse,
+    GetBundleInfoRequest, GetBundleInfoResponse,
+    ListBundlesRequest, ListBundlesResponse,
+    DeleteBundleRequest, DeleteBundleResponse,
+    ValidateBundleRequest, ValidateBundleResponse,
+    upload_bundle_request,
 };
 use sysinfo::System;
+use tokio::fs::{self, File};
+use tokio::io::AsyncWriteExt;
+use tokio_stream::StreamExt;
+use tempfile::NamedTempFile;
 
 #[derive(Clone)]
 pub struct QuiltServiceImpl {
     sync_engine: Arc<SyncEngine>,
+    package_store: Arc<tokio::sync::Mutex<PackageStore>>,
 }
 
 impl QuiltServiceImpl {
@@ -58,6 +71,9 @@ impl QuiltServiceImpl {
         // Initialize sync engine with the robust database path
         let sync_engine = Arc::new(SyncEngine::new(db_path_str).await?);
         
+        // Initialize package store
+        let package_store = Arc::new(tokio::sync::Mutex::new(PackageStore::new().await?));
+        
         // Start background services for monitoring and cleanup
         sync_engine.start_background_services().await?;
         
@@ -65,6 +81,7 @@ impl QuiltServiceImpl {
         
         Ok(Self {
             sync_engine,
+            package_store,
         })
     }
 }
@@ -112,7 +129,7 @@ impl QuiltService for QuiltServiceImpl {
                     let sync_engine = self.sync_engine.clone();
                     let container_id_clone = container_id.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = start_container_process(&sync_engine, &container_id_clone).await {
+                        if let Err(e) = start_container_process(sync_engine.clone(), container_id_clone.clone()).await {
                             ConsoleLogger::error(&format!("Failed to start container process {}: {}", container_id_clone, e));
                             let _ = sync_engine.update_container_state(&container_id_clone, ContainerState::Error).await;
                         }
@@ -176,15 +193,17 @@ impl QuiltService for QuiltServiceImpl {
                 let container_id = req.container_id.clone();
                 
                 tokio::spawn(async move {
-                    match start_container_process(&sync_engine, &container_id).await {
+                    let sync_engine_clone = sync_engine.clone();
+                    let container_id_clone = container_id.clone();
+                    match start_container_process(sync_engine, container_id).await {
                         Ok(()) => {
-                            ConsoleLogger::success(&format!("Container {} startup completed successfully", container_id));
+                            ConsoleLogger::success(&format!("Container {} startup completed successfully", container_id_clone));
                         }
                         Err(e) => {
-                            ConsoleLogger::error(&format!("Container {} startup failed: {}", container_id, e));
+                            ConsoleLogger::error(&format!("Container {} startup failed: {}", container_id_clone, e));
                             // Update to error state on failure
-                            let _ = sync_engine.update_container_state_with_details(
-                                &container_id, 
+                            let _ = sync_engine_clone.update_container_state_with_details(
+                                &container_id_clone, 
                                 ContainerState::Error,
                                 None,
                                 Some(1) // Exit code 1 for startup failure
@@ -750,10 +769,103 @@ impl QuiltService for QuiltServiceImpl {
             Err(e) => Err(Status::not_found(format!("Network info not found for container {}: {}", req.container_id, e))),
         }
     }
+
+    // Bundle management methods (Phase 2.1 stubs - will be fully implemented in Phase 2.2)
+    async fn upload_bundle(
+        &self,
+        request: Request<tonic::Streaming<UploadBundleRequest>>,
+    ) -> Result<Response<UploadBundleResponse>, Status> {
+        let mut stream = request.into_inner();
+        let mut bundle_data = Vec::new();
+        let start_time = std::time::Instant::now();
+
+        // 1. Receive stream into a buffer
+        while let Some(chunk_result) = stream.next().await {
+            let chunk = chunk_result?;
+            if let Some(payload) = chunk.payload {
+                match payload {
+                    upload_bundle_request::Payload::Metadata(metadata) => {
+                        ConsoleLogger::info(&format!("Receiving bundle: {} v{}", metadata.name, metadata.version));
+                        // TODO: Use metadata for pre-validation (e.g., size checks)
+                    }
+                    upload_bundle_request::Payload::Chunk(data) => {
+                        bundle_data.extend_from_slice(&data);
+                    }
+                    upload_bundle_request::Payload::Checksum(client_hash) => {
+                        let server_hash = blake3::hash(&bundle_data).to_hex().to_string();
+                        if server_hash != client_hash {
+                            return Err(Status::invalid_argument(format!(
+                                "Checksum mismatch: server {} vs client {}",
+                                server_hash, client_hash
+                            )));
+                        }
+                        ConsoleLogger::success("Bundle integrity verified with Blake3 checksum");
+                    }
+                }
+            }
+        }
+        
+        let bytes_received = bundle_data.len() as u64;
+
+        // 2. Persist to pkg_store
+        let bundle_id = self.package_store
+            .lock()
+            .await
+            .store_bundle(bundle_data)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to store bundle: {}", e)))?;
+        
+        ConsoleLogger::info(&format!("Bundle stored with content-addressed ID: {}", bundle_id));
+        
+        let upload_time = start_time.elapsed().as_secs_f64();
+
+        // 3. Respond with success
+        Ok(Response::new(UploadBundleResponse {
+            success: true,
+            bundle_id,
+            bytes_received,
+            upload_time_seconds: upload_time,
+            error_message: String::new(),
+            bundle_info: None,
+            status: quilt::BundleStatus::BundleStored as i32,
+        }))
+    }
+
+    async fn get_bundle_info(
+        &self,
+        _request: Request<GetBundleInfoRequest>,
+    ) -> Result<Response<GetBundleInfoResponse>, Status> {
+        // TODO: Implement bundle info retrieval from pkg_store
+        Err(Status::unimplemented("get_bundle_info not implemented"))
+    }
+
+    async fn list_bundles(
+        &self,
+        _request: Request<ListBundlesRequest>,
+    ) -> Result<Response<ListBundlesResponse>, Status> {
+        // TODO: Implement bundle listing from pkg_store
+        Err(Status::unimplemented("list_bundles not implemented"))
+    }
+
+    async fn delete_bundle(
+        &self,
+        _request: Request<DeleteBundleRequest>,
+    ) -> Result<Response<DeleteBundleResponse>, Status> {
+        // TODO: Implement bundle deletion from pkg_store
+        Err(Status::unimplemented("delete_bundle not implemented"))
+    }
+    
+    async fn validate_bundle(
+        &self,
+        _request: Request<ValidateBundleRequest>,
+    ) -> Result<Response<ValidateBundleResponse>, Status> {
+        // TODO: Implement bundle validation logic
+        Err(Status::unimplemented("validate_bundle not implemented"))
+    }
 }
 
 // ✅ BACKGROUND CONTAINER PROCESS STARTUP
-async fn start_container_process(sync_engine: &SyncEngine, container_id: &str) -> Result<(), String> {
+async fn start_container_process(sync_engine: Arc<SyncEngine>, container_id: String) -> Result<(), String> {
     use daemon::runtime::ContainerRuntime;
     use std::collections::HashMap;
     
@@ -761,7 +873,7 @@ async fn start_container_process(sync_engine: &SyncEngine, container_id: &str) -
     
     // Get container configuration from sync engine
     let container_record = sqlx::query("SELECT image_path, command FROM containers WHERE id = ?")
-        .bind(container_id)
+        .bind(&container_id)
         .fetch_one(sync_engine.pool())
         .await
         .map_err(|e| format!("Failed to get container details: {}", e))?;
@@ -786,22 +898,22 @@ async fn start_container_process(sync_engine: &SyncEngine, container_id: &str) -
     ConsoleLogger::debug(&format!("🏗️ [STARTUP] Creating container in legacy runtime: {}", container_id));
 
     // Create container in legacy runtime
-    runtime.create_container(container_id.to_string(), legacy_config)
+    runtime.create_container(container_id.clone(), legacy_config)
         .map_err(|e| format!("Failed to create legacy container: {}", e))?;
 
     ConsoleLogger::debug(&format!("🚀 [STARTUP] Starting container process: {}", container_id));
 
     // Start the container and monitor its lifecycle
-    match runtime.start_container(container_id, None) {
+    match runtime.start_container(&container_id, None) {
         Ok(()) => {
             ConsoleLogger::info(&format!("✅ [STARTUP] Container process started successfully: {}", container_id));
             
             // ✅ ATOMIC STATE UPDATE: Get PID and transition to Running atomically
-            if let Some(container_info) = runtime.get_container_info(container_id) {
+            if let Some(container_info) = runtime.get_container_info(&container_id) {
                 if let Some(pid) = container_info.pid {
                     // Update to Running state with PID in one atomic operation
                     sync_engine.update_container_state_with_details(
-                        container_id, 
+                        &container_id, 
                         ContainerState::Running,
                         Some(pid.as_raw() as i64),
                         None
@@ -810,20 +922,22 @@ async fn start_container_process(sync_engine: &SyncEngine, container_id: &str) -
                     ConsoleLogger::success(&format!("🏃 [STARTUP] Container {} is now Running (PID: {})", container_id, pid.as_raw()));
                     
                     // ✅ WAIT FOR COMPLETION: Monitor process and handle exit atomically
+                    let sync_engine_clone = sync_engine.clone();
+                    let container_id_clone = container_id.clone();
                     tokio::spawn(async move {
                         // Wait for the container to complete
                         loop {
                             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                             
-                            match runtime.get_container_info(container_id) {
+                            match runtime.get_container_info(&container_id_clone) {
                                 Some(info) => {
                                     match info.state {
                                         daemon::runtime::ContainerState::EXITED(exit_code) => {
-                                            ConsoleLogger::info(&format!("🏁 [LIFECYCLE] Container {} completed with exit code: {}", container_id, exit_code));
+                                            ConsoleLogger::info(&format!("🏁 [LIFECYCLE] Container {} completed with exit code: {}", container_id_clone, exit_code));
                                             
                                             // ✅ ATOMIC EXIT UPDATE: Update to Exited state with exit code
-                                            let _ = sync_engine.update_container_state_with_details(
-                                                container_id,
+                                            let _ = sync_engine_clone.update_container_state_with_details(
+                                                &container_id_clone,
                                                 ContainerState::Exited,
                                                 None, // Clear PID
                                                 Some(exit_code as i64)
@@ -831,11 +945,11 @@ async fn start_container_process(sync_engine: &SyncEngine, container_id: &str) -
                                             break;
                                         }
                                         daemon::runtime::ContainerState::FAILED(error) => {
-                                            ConsoleLogger::error(&format!("❌ [LIFECYCLE] Container {} failed: {}", container_id, error));
+                                            ConsoleLogger::error(&format!("❌ [LIFECYCLE] Container {} failed: {}", container_id_clone, error));
                                             
                                             // ✅ ATOMIC ERROR UPDATE: Update to Error state
-                                            let _ = sync_engine.update_container_state_with_details(
-                                                container_id,
+                                            let _ = sync_engine_clone.update_container_state_with_details(
+                                                &container_id_clone,
                                                 ContainerState::Error,
                                                 None, // Clear PID
                                                 Some(1) // Generic error exit code
@@ -849,9 +963,9 @@ async fn start_container_process(sync_engine: &SyncEngine, container_id: &str) -
                                 }
                                 None => {
                                     // Container disappeared, mark as failed
-                                    ConsoleLogger::warning(&format!("⚠️ [LIFECYCLE] Container {} disappeared from runtime", container_id));
-                                    let _ = sync_engine.update_container_state_with_details(
-                                        container_id,
+                                    ConsoleLogger::warning(&format!("⚠️ [LIFECYCLE] Container {} disappeared from runtime", container_id_clone));
+                                    let _ = sync_engine_clone.update_container_state_with_details(
+                                        &container_id_clone,
                                         ContainerState::Error,
                                         None,
                                         Some(127) // Process not found exit code
@@ -867,11 +981,11 @@ async fn start_container_process(sync_engine: &SyncEngine, container_id: &str) -
                     ConsoleLogger::warning(&format!("⚠️ [STARTUP] Container {} started but no PID available (may have completed quickly)", container_id));
                     
                     // Check if it completed immediately
-                    if let Some(info) = runtime.get_container_info(container_id) {
+                    if let Some(info) = runtime.get_container_info(&container_id) {
                         match info.state {
                             daemon::runtime::ContainerState::EXITED(exit_code) => {
                                 sync_engine.update_container_state_with_details(
-                                    container_id,
+                                    &container_id,
                                     ContainerState::Exited,
                                     None,
                                     Some(exit_code as i64)
@@ -879,7 +993,7 @@ async fn start_container_process(sync_engine: &SyncEngine, container_id: &str) -
                             }
                             daemon::runtime::ContainerState::FAILED(error) => {
                                 sync_engine.update_container_state_with_details(
-                                    container_id,
+                                    &container_id,
                                     ContainerState::Error,
                                     None,
                                     Some(1)
@@ -888,7 +1002,7 @@ async fn start_container_process(sync_engine: &SyncEngine, container_id: &str) -
                             }
                             _ => {
                                 // Mark as running without PID
-                                sync_engine.update_container_state(container_id, ContainerState::Running).await
+                                sync_engine.update_container_state(&container_id, ContainerState::Running).await
                                     .map_err(|e| format!("Failed to update to running state: {}", e))?;
                             }
                         }
