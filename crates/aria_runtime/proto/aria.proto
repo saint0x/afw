@@ -1,0 +1,367 @@
+syntax = "proto3";
+
+package aria;
+
+import "google/protobuf/timestamp.proto";
+
+// ============================================================================
+// Common Types and Enums
+// ============================================================================
+
+// Represents a standard key-value pair, often used for environment variables or labels.
+message KeyValuePair {
+    string key = 1;
+    string value = 2;
+}
+
+// Represents the status of a long-running operation.
+enum TaskStatus {
+    TASK_STATUS_UNSPECIFIED = 0;
+    PENDING = 1;
+    RUNNING = 2;
+    COMPLETED = 3;
+    FAILED = 4;
+    CANCELLED = 5;
+    TIMEOUT = 6;
+}
+
+// Represents the role in a conversation.
+enum MessageRole {
+    MESSAGE_ROLE_UNSPECIFIED = 0;
+    SYSTEM = 1;
+    USER = 2;
+    ASSISTANT = 3;
+    TOOL = 4;
+}
+
+// ============================================================================
+// Task Service
+// ============================================================================
+
+// Service for managing and interacting with long-running asynchronous tasks.
+service TaskService {
+    // Launches a new asynchronous task.
+    rpc LaunchTask(LaunchTaskRequest) returns (LaunchTaskResponse);
+
+    // Retrieves the current status and details of a task.
+    rpc GetTask(GetTaskRequest) returns (Task);
+
+    // Lists tasks, with support for filtering and pagination.
+    rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
+
+    // Streams the output (stdout/stderr) and progress of a running task.
+    rpc StreamTaskOutput(StreamTaskOutputRequest) returns (stream TaskOutput);
+
+    // Cancels a pending or running task.
+    rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse);
+}
+
+// Full representation of an asynchronous task.
+message Task {
+    string id = 1;
+    string user_id = 2;
+    string session_id = 3;
+    string container_id = 4;
+    optional string parent_task_id = 5;
+
+    string type = 6; // e.g., "container:exec", "bundle:build"
+    string command_json = 7; // JSON array representing the command
+    map<string, string> environment = 8;
+    int32 timeout_seconds = 9;
+
+    TaskStatus status = 10;
+    google.protobuf.Timestamp created_at = 11;
+    optional google.protobuf.Timestamp started_at = 12;
+    optional google.protobuf.Timestamp completed_at = 13;
+
+    optional int32 exit_code = 14;
+    optional string error_message = 15;
+    
+    double progress_percent = 16;
+    string current_operation = 17;
+}
+
+message LaunchTaskRequest {
+    string session_id = 1;
+    string type = 2;
+    string command_json = 3;
+    map<string, string> environment = 4;
+    int32 timeout_seconds = 5;
+}
+
+message LaunchTaskResponse {
+    string task_id = 1;
+}
+
+message GetTaskRequest {
+    string task_id = 1;
+}
+
+message ListTasksRequest {
+    // Optional: Filter tasks by the session that created them.
+    optional string session_id = 1; 
+    
+    // Optional: Filter by one or more statuses.
+    repeated TaskStatus filter_by_status = 2;
+
+    // The maximum number of tasks to return.
+    int32 page_size = 3;
+
+    // A page token, received from a previous `ListTasks` call.
+    string page_token = 4;
+}
+
+message ListTasksResponse {
+    // The list of tasks found.
+    repeated Task tasks = 1;
+
+    // A token to retrieve the next page of results. If this field is
+    // empty, there are no more results.
+    string next_page_token = 2;
+}
+
+// Represents a single log line or progress update from a task.
+message TaskOutput {
+    string task_id = 1;
+    google.protobuf.Timestamp timestamp = 2;
+
+    oneof output {
+        string stdout_line = 3;
+        string stderr_line = 4;
+        ProgressUpdate progress = 5;
+    }
+}
+
+message ProgressUpdate {
+    double percent_complete = 1;
+    string operation_description = 2;
+}
+
+message StreamTaskOutputRequest {
+    string task_id = 1;
+    bool follow = 2; // If true, stream stays open for new output.
+}
+
+message CancelTaskRequest {
+    string task_id = 1;
+}
+
+message CancelTaskResponse {
+    bool cancellation_initiated = 1;
+}
+
+// ============================================================================
+// Session Service
+// ============================================================================
+
+// Service for managing user sessions and conversations.
+service SessionService {
+    // Creates a new session for a user.
+    rpc CreateSession(CreateSessionRequest) returns (Session);
+
+    // Gets details for a specific session.
+    rpc GetSession(GetSessionRequest) returns (Session);
+
+    // Executes a "turn" in a conversation within a session.
+    rpc ExecuteTurn(ExecuteTurnRequest) returns (stream TurnOutput);
+}
+
+message Session {
+    string id = 1;
+    string user_id = 2;
+    google.protobuf.Timestamp created_at = 3;
+    map<string, string> context_data = 4;
+    string status = 5; // e.g., "active", "completed", "failed"
+}
+
+message CreateSessionRequest {
+    // Future: Add agent config, context, etc.
+    // For now, it's simple.
+}
+
+message GetSessionRequest {
+    string session_id = 1;
+}
+
+message ExecuteTurnRequest {
+    string session_id = 1;
+    string input = 2; // User's message/prompt
+}
+
+// Represents an event happening during an agent's turn.
+message TurnOutput {
+    oneof event {
+        Message message = 1; // A message from user, assistant, or tool
+        ToolCall tool_call = 2;
+        ToolResult tool_result = 3;
+        string final_response = 4; // Final assistant response
+    }
+}
+
+message Message {
+    string id = 1;
+    MessageRole role = 2;
+    string content = 3;
+    google.protobuf.Timestamp created_at = 4;
+}
+
+message ToolCall {
+    string tool_name = 1;
+    string parameters_json = 2; // JSON object of parameters
+}
+
+message ToolResult {
+    string tool_name = 1;
+    string result_json = 2; // JSON object of the result
+    bool success = 3;
+    optional string error_message = 4;
+}
+
+// ============================================================================
+// Container Service
+// ============================================================================
+
+// Service for direct, low-level management of containers.
+// Wraps the underlying quilt daemon.
+service ContainerService {
+    rpc CreateContainer(CreateContainerRequest) returns (Container);
+    rpc StartContainer(StartContainerRequest) returns (StartContainerResponse);
+    rpc StopContainer(StopContainerRequest) returns (StopContainerResponse);
+    rpc RemoveContainer(RemoveContainerRequest) returns (RemoveContainerResponse);
+    rpc GetContainer(GetContainerRequest) returns (Container);
+    rpc ListContainers(ListContainersRequest) returns (ListContainersResponse);
+    rpc StreamContainerLogs(StreamContainerLogsRequest) returns (stream ContainerLog);
+}
+
+message Container {
+    string id = 1;
+    string user_id = 2;
+    optional string session_id = 3;
+    string name = 4;
+    string image_path = 5;
+    TaskStatus status = 6;
+    google.protobuf.Timestamp created_at = 7;
+}
+
+message CreateContainerRequest {
+    string name = 1;
+    string image_path = 2;
+    repeated KeyValuePair environment = 3;
+    bool persistent = 4; // If true, container survives session end
+}
+
+message StartContainerRequest {
+    string container_id = 1;
+}
+message StartContainerResponse {}
+
+message StopContainerRequest {
+    string container_id = 1;
+}
+message StopContainerResponse {}
+
+message RemoveContainerRequest {
+    string container_id = 1;
+}
+message RemoveContainerResponse {}
+
+message GetContainerRequest {
+    string container_id = 1;
+}
+
+message ListContainersRequest {
+    optional string session_id = 1; // Filter by session
+}
+message ListContainersResponse {
+    repeated Container containers = 1;
+}
+
+message StreamContainerLogsRequest {
+    string container_id = 1;
+    bool follow = 2;
+    optional google.protobuf.Timestamp since = 3;
+}
+message ContainerLog {
+    string line = 1;
+    enum Stream {
+        STREAM_UNSPECIFIED = 0;
+        STDOUT = 1;
+        STDERR = 2;
+    }
+    Stream stream = 2;
+    google.protobuf.Timestamp timestamp = 3;
+}
+
+// ============================================================================
+// Notification Service
+// ============================================================================
+
+// Service for streaming real-time events from the runtime to the client.
+service NotificationService {
+    // Establishes a persistent stream for the client to receive notifications.
+    rpc StreamNotifications(StreamNotificationsRequest) returns (stream Notification);
+}
+
+// Initial request to subscribe to notifications. Can be used to filter events in the future.
+message StreamNotificationsRequest {
+    // For now, it's empty and subscribes to all events.
+}
+
+// A single notification event from the runtime.
+message Notification {
+    string id = 1; // Unique ID for the notification event
+    google.protobuf.Timestamp timestamp = 2;
+
+    oneof event_payload {
+        BundleUploadEvent bundle_upload = 3;
+        TaskStatusEvent task_status = 4;
+    }
+}
+
+// Event for when a .aria bundle upload status changes.
+message BundleUploadEvent {
+    string bundle_name = 1;
+    double progress_percent = 2; // e.g., 50.5 for 50.5%
+    string status_message = 3;   // e.g., "Uploading...", "Processing...", "Deploying..."
+    bool success = 4;            // True if upload and deployment succeeded
+    optional string error_message = 5;
+}
+
+// Event for when a task's status changes.
+message TaskStatusEvent {
+    string task_id = 1;
+    TaskStatus new_status = 2;
+    string status_message = 3;
+    optional int32 exit_code = 4;
+}
+
+// ============================================================================
+// Bundle Service (from INTEGRATIONTODO.md)
+// ============================================================================
+
+// Service for managing and deploying .aria bundles.
+service BundleService {
+    // Uploads a bundle to the runtime via a client-side stream.
+    // The first message in the stream must be a `Metadata` message.
+    // All subsequent messages must be `Chunk` messages.
+    rpc UploadBundle(stream UploadBundleRequest) returns (UploadBundleResponse);
+}
+
+message UploadBundleRequest {
+    oneof payload {
+        BundleMetadata metadata = 1;
+        bytes chunk = 2;
+    }
+}
+
+message BundleMetadata {
+    string name = 1; // e.g., "weather-agent.aria"
+    uint64 total_size_bytes = 2;
+    // Future: string sha256_checksum = 3;
+}
+
+message UploadBundleResponse {
+    string bundle_id = 1;
+    bool success = 2;
+    optional string error_message = 3;
+} 

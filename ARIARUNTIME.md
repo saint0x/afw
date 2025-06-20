@@ -6,6 +6,41 @@
 > 🚧 = In progress  
 > ⭕ = Not started  
 
+---
+
+## 🚨 High Priority: Implement New SDK API
+
+A new, simplified developer-facing API has been defined in `NEWAPI.md`. The runtime must be updated to support these decorators and their corresponding backend logic. This is the critical path for the new developer experience.
+
+- [ ] ⭕ Implement `@db.*` decorators (`get`, `set`, `delete`, `query`)
+- [ ] ⭕ Implement `@task.*` decorators (`launch`, `status`)
+- [ ] ⭕ Implement `@memory.*` decorators (`store`, `retrieve`)
+- [ ] ⭕ Implement `@log.*` decorators (`info`, `warn`, `error`)
+
+---
+
+## 🚨 High Priority: Implement Public gRPC API
+
+The public-facing gRPC API, as defined in `APICONTRACT.md`, must be fully implemented to enable client interaction. This includes the core services for session management, task execution, and real-time notifications.
+
+- [ ] ⭕ **SessionService**: Implement the full gRPC service for managing user sessions and conversational turns.
+  - [ ] ⭕ `CreateSession`
+  - [ ] ⭕ `GetSession`
+  - [ ] ⭕ `ExecuteTurn` (streaming responses for chat)
+- [ ] ⭕ **TaskService**: Implement the gRPC service for managing long-running asynchronous tasks.
+  - [ ] ⭕ `LaunchTask`
+  - [ ] ⭕ `GetTask`
+  - [ ] ⭕ `StreamTaskOutput`
+  - [ ] ⭕ `CancelTask`
+- [ ] ⭕ **ContainerService**: Implement the gRPC wrapper for the Quilt container daemon.
+  - [ ] ⭕ `CreateContainer`, `StartContainer`, `StopContainer`, `RemoveContainer`
+  - [ ] ⭕ `GetContainer`, `ListContainers`
+  - [ ] ⭕ `StreamContainerLogs`
+- [ ] ⭕ **NotificationService**: Implement the gRPC service for streaming real-time notifications to the client.
+  - [ ] ⭕ `StreamNotifications` (for bundle uploads, task status changes, etc.)
+
+---
+
 ## Core Architecture Foundation
 
 ### Engine Structure Setup
@@ -405,6 +440,7 @@ CREATE TABLE audit_logs (
 - ⭕ Implement distributed tracing support
 
 ### Security & Safety
+- [ ] ⭕ **(P0)** Implement API Key authentication (`x-api-key` header) for all gRPC services.
 - ⭕ Implement container execution sandboxing
 - ✅ Add input validation and sanitization
 - ⭕ Implement rate limiting for container creation

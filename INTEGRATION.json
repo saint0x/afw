@@ -1,0 +1,211 @@
+{
+    "integrationTitle": "Frontend to Aria Runtime gRPC Integration Specification",
+    "overview": {
+      "description": "This document details the integration points between the frontend application and the Aria Runtime backend via its gRPC API over a Unix Domain Socket.",
+      "communicationProtocol": "gRPC over Unix Domain Socket",
+      "socketPath": "~/.aria/runtime.sock (default, potentially configurable via ARIA_RUNTIME_SOCK)"
+    },
+    "globalConsiderations": {
+      "errorHandling": "Frontend must handle standard gRPC status codes (PERMISSION_DENIED, NOT_FOUND, INVALID_ARGUMENT, INTERNAL) and parse google.rpc.Status from error details for structured error messages.",
+      "realTimeUpdates": "Primarily handled by NotificationService and streaming RPCs from other services.",
+      "typeMapping": "Frontend types (lib/types.ts) will need to be mapped from/to Protobuf message definitions. Consider code generation for TS types from .proto files for strong typing."
+    },
+    "serviceIntegrations": [
+      {
+        "serviceName": "NotificationService",
+        "protoFile": "aria/v1/notification_service.proto",
+        "description": "Provides real-time event streaming from the runtime to the client.",
+        "rpcs": [
+          {
+            "rpcName": "StreamNotifications",
+            "description": "Establishes a persistent stream for receiving various runtime notifications.",
+            "frontendUseCase": [
+              "Update UI with .aria bundle upload progress and status (ToolUploadSuccessDisplay, potentially a dedicated UI element).",
+              "Reflect real-time task status changes in the TaskListView and StepDetailPane."
+            ],
+            "requestPayload": "StreamNotificationsRequest (currently empty)",
+            "responsePayload": "stream Notification (oneof event_payload: BundleUploadEvent, TaskStatusEvent)",
+            "frontendDataMapping": {
+              "BundleUploadEvent": "Maps to UI updates for bundle uploads (e.g., progress bar, status messages, success/error indicators).",
+              "TaskStatusEvent": "Updates the 'status' field of frontend 'Task' objects and related UI elements (e.g., status dots, text in TaskListView, StepDetailPane)."
+            },
+            "notesAndGaps": "Frontend needs to maintain a persistent connection to this stream upon application load."
+          }
+        ]
+      },
+      {
+        "serviceName": "SessionService",
+        "protoFile": "aria/v1/session_service.proto",
+        "description": "Manages user sessions and the core conversational/task execution flow.",
+        "rpcs": [
+          {
+            "rpcName": "CreateSession",
+            "description": "Creates a new session for a user.",
+            "frontendUseCase": [
+              "Called when the user initiates a new interaction or clicks the 'New Task' button in GlassmorphicChatbar to get a new session_id."
+            ],
+            "requestPayload": "CreateSessionRequest (currently simple, future: agent config, context)",
+            "responsePayload": "Session (contains session_id, user_id, created_at, context_data, status)",
+            "frontendDataMapping": {
+              "Session.id": "Used as session_id in subsequent ExecuteTurn calls."
+            },
+            "notesAndGaps": "Frontend needs to store and use the returned session_id for the duration of the interaction."
+          },
+          {
+            "rpcName": "GetSession",
+            "description": "Gets details for a specific session.",
+            "frontendUseCase": [
+              "Potentially used to rehydrate session state or display session-specific information if needed, though not explicitly part of the current UI flow."
+            ],
+            "requestPayload": "GetSessionRequest (session_id)",
+            "responsePayload": "Session",
+            "frontendDataMapping": {},
+            "notesAndGaps": "Current UI doesn't seem to require explicitly fetching session details after creation, but could be useful for debugging or future features."
+          },
+          {
+            "rpcName": "ExecuteTurn",
+            "description": "Executes a 'turn' in a conversation, processing user input and streaming back agent actions and responses.",
+            "frontendUseCase": [
+              "Core of the chat interaction in GlassmorphicChatbar and AgentStatusIndicator.",
+              "Called when the user submits input via the chatbar."
+            ],
+            "requestPayload": "ExecuteTurnRequest (session_id, input: user's message)",
+            "responsePayload": "stream TurnOutput (oneof event: Message, ToolCall, ToolResult, final_response)",
+            "frontendDataMapping": {
+              "TurnOutput.Message": "Maps to frontend 'EnhancedStep' (type: USER_MESSAGE, RESPONSE, THOUGHT - depending on MessageRole). Role SYSTEM/ASSISTANT/TOOL map to AI responses/thoughts/tool messages.",
+              "TurnOutput.ToolCall": "Maps to frontend 'EnhancedStep' (type: TOOL, status: PENDING/ACTIVE). Populates toolName, toolInput.",
+              "TurnOutput.ToolResult": "Updates the corresponding 'EnhancedStep' for the tool call (status: COMPLETED/FAILED). Populates output/error.",
+              "TurnOutput.final_response": "Maps to frontend 'EnhancedStep' (type: RESPONSE, status: COMPLETED), representing the final AI answer for the turn."
+            },
+            "notesAndGaps": "Frontend needs to handle the stream and progressively build the AgentStatusIndicator UI. Mapping MessageRole to StepType needs careful consideration."
+          }
+        ]
+      },
+      {
+        "serviceName": "TaskService",
+        "protoFile": "aria/v1/task_service.proto",
+        "description": "Manages long-running asynchronous tasks.",
+        "rpcs": [
+          {
+            "rpcName": "LaunchTask",
+            "description": "Launches a new asynchronous task.",
+            "frontendUseCase": [
+              "Used when an agent's turn (from SessionService.ExecuteTurn) needs to initiate a background process that outlives the turn itself (e.g., a complex tool execution, data processing).",
+              "Potentially used by custom 'Tools' selected in the GlassmorphicChatbar if they trigger backend tasks."
+            ],
+            "requestPayload": "LaunchTaskRequest (session_id, type, command_json, environment, timeout_seconds)",
+            "responsePayload": "LaunchTaskResponse (task_id)",
+            "frontendDataMapping": {
+              "LaunchTaskResponse.task_id": "Used to track the task, fetch its status (GetTask), or stream its output (StreamTaskOutput)."
+            },
+            "notesAndGaps": "The 'type' and 'command_json' would be determined by the agent or tool definition."
+          },
+          {
+            "rpcName": "GetTask",
+            "description": "Retrieves the current status and details of a task.",
+            "frontendUseCase": [
+              "Called when a user selects a task in the TaskListView to populate the StepDetailPane.",
+              "Periodically, or in response to TaskStatusEvent, to refresh task details."
+            ],
+            "requestPayload": "GetTaskRequest (task_id)",
+            "responsePayload": "Task (detailed task information)",
+            "frontendDataMapping": {
+              "Task (protobuf)": "Directly maps to frontend 'Task' type (lib/types.ts). Fields like id, status, created_at, started_at, completed_at, exit_code, error_message, progress_percent, current_operation are all relevant."
+            },
+            "notesAndGaps": ""
+          },
+          {
+            "rpcName": "StreamTaskOutput",
+            "description": "Streams the output (stdout/stderr) and progress of a running task.",
+            "frontendUseCase": [
+              "Populates the LoggingView with real-time output from a selected or active task.",
+              "Could also feed into the StepDetailPane for a running task to show live progress/logs."
+            ],
+            "requestPayload": "StreamTaskOutputRequest (task_id, follow)",
+            "responsePayload": "stream TaskOutput (oneof output: stdout_line, stderr_line, ProgressUpdate)",
+            "frontendDataMapping": {
+              "TaskOutput.stdout_line / stderr_line": "Maps to frontend 'LogEntry' (or similar structure) for display in LoggingView.",
+              "TaskOutput.ProgressUpdate": "Updates progress indicators (e.g., progress_percent, current_operation on frontend 'Task' object) in TaskListView or StepDetailPane."
+            },
+            "notesAndGaps": "Frontend needs to handle different TaskOutput types appropriately."
+          },
+          {
+            "rpcName": "CancelTask",
+            "description": "Cancels a pending or running task.",
+            "frontendUseCase": [
+              "Provide a 'Cancel' button for tasks in TaskListView or StepDetailPane."
+            ],
+            "requestPayload": "CancelTaskRequest (task_id)",
+            "responsePayload": "CancelTaskResponse (cancellation_initiated)",
+            "frontendDataMapping": {},
+            "notesAndGaps": "UI should reflect that cancellation is initiated and then wait for a TaskStatusEvent (CANCELLED) via NotificationService."
+          }
+        ]
+      },
+      {
+        "serviceName": "ContainerService",
+        "protoFile": "aria/v1/container_service.proto",
+        "description": "Direct, low-level management of containers. Wraps the underlying quilt daemon.",
+        "rpcs": [
+          {
+            "rpcName": "General",
+            "description": "Includes CreateContainer, StartContainer, StopContainer, RemoveContainer, GetContainer, ListContainers, StreamContainerLogs.",
+            "frontendUseCase": [
+              "Currently not directly used by the primary chat UI (GlassmorphicChatbar, TaskListView, etc.).",
+              "Could be leveraged by a 'Developer Console' tool or advanced settings/management views in the future.",
+              "StreamContainerLogs could feed into the LoggingView if a user needs to inspect raw container logs for a specific task's container."
+            ],
+            "requestPayload": "Varies by RPC (e.g., CreateContainerRequest, StreamContainerLogsRequest)",
+            "responsePayload": "Varies by RPC (e.g., Container, stream ContainerLog)",
+            "frontendDataMapping": {
+              "ContainerLog": "Could map to frontend 'LogEntry' for display in LoggingView."
+            },
+            "notesAndGaps": "Integration with this service is secondary for the current core UI but important for deeper system interaction or developer-focused tools."
+          }
+        ]
+      }
+    ],
+    "unresolvedFunctionalityAndGaps": [
+      {
+        "area": "Task Listing",
+        "description": "The current frontend TaskListView implies a need to list multiple tasks. The gRPC contract (TaskService) does not currently provide a 'ListTasks' RPC. Tasks are individually retrievable via GetTask if their IDs are known (e.g., from LaunchTask or a session context).",
+        "possibleSolutions": [
+          "Backend adds a ListTasks RPC to TaskService.",
+          "Tasks are listed based on those associated with active/recent sessions (SessionService might need enhancement to expose task IDs).",
+          "Frontend maintains a local list of tasks initiated/observed during its lifetime (less robust)."
+        ]
+      },
+      {
+        "area": "Bundle/Tool Upload Initiation",
+        "description": "NotificationService provides BundleUploadEvent for upload status, but the gRPC contract doesn't specify how a bundle upload is initiated by the client.",
+        "possibleSolutions": [
+          "An HTTP endpoint (separate from gRPC) might be used for file uploads.",
+          "A gRPC stream for uploading file chunks could be added (less common for large files but possible)."
+        ]
+      },
+      {
+        "area": "Tool and Agent Definitions/Management",
+        "description": "The contract covers using tools (ToolCall, ToolResult) but not how tool definitions or available agents are discovered or managed by the client.",
+        "possibleSolutions": [
+          "These could be part of the '.aria bundle' concept.",
+          "A separate configuration service or mechanism might be needed if these are dynamically manageable."
+        ]
+      },
+      {
+        "area": "Generic Application Logging",
+        "description": "LoggingView currently shows generic logs. Backend provides specific TaskOutput and ContainerLog streams. If LoggingView needs to display more generic runtime logs (not tied to a specific task/container), a dedicated logging stream/service might be needed.",
+        "possibleSolutions": [
+          "Extend NotificationService to include generic log events.",
+          "Introduce a new LogService for streaming application-level logs."
+        ]
+      },
+      {
+        "area": "Settings Persistence",
+        "description": "SettingsView allows changing model, prompt, blur, theme. The gRPC contract doesn't cover persisting these settings on the backend.",
+        "possibleSolutions": [
+          "Settings could be client-side only (localStorage).",
+          "A new UserPreferenceService or similar could be added to the backend to store settings."
+        ]
+      }
+    ]
+  }

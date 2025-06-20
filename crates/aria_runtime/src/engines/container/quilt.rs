@@ -16,7 +16,8 @@ use quilt_proto::{
     CreateContainerRequest, StartContainerRequest, ExecContainerRequest, GetContainerLogsRequest,
     GetContainerStatusRequest, RemoveContainerRequest, StopContainerRequest,
     LogEntry, ListContainersRequest, GetSystemMetricsRequest, GetNetworkTopologyRequest,
-    GetContainerNetworkInfoRequest,
+    GetContainerNetworkInfoRequest, ExecContainerAsyncRequest, GetTaskStatusRequest,
+    GetTaskResultRequest, ListTasksRequest, CancelTaskRequest,
 };
 
 /// A client for interacting with the `quiltd` container management daemon.
@@ -233,6 +234,81 @@ impl QuiltService {
         let request = GetContainerNetworkInfoRequest { container_id };
         let response = self.client.get_container_network_info(request).await.map_err(to_aria_error)?;
         Ok(response.into_inner())
+    }
+
+    // === Async Task Management ===
+
+    /// Execute a command asynchronously in a container
+    pub async fn exec_container_async(
+        &mut self,
+        container_id: String,
+        command: Vec<String>,
+        timeout_seconds: Option<i32>,
+    ) -> AriaResult<String> {
+        let request = quilt_proto::ExecContainerAsyncRequest {
+            container_id,
+            command,
+            working_directory: "".to_string(),
+            environment: std::collections::HashMap::new(),
+            capture_output: true,
+            timeout_seconds: timeout_seconds.unwrap_or(0),
+        };
+
+        let response = self.client.exec_container_async(request).await.map_err(to_aria_error)?;
+        let res = response.into_inner();
+
+        if res.success {
+            Ok(res.task_id)
+        } else {
+            Err(AriaError::new(
+                ErrorCode::ContainerOperationFailed,
+                ErrorCategory::Container,
+                ErrorSeverity::High,
+                &format!("Failed to start async task: {}", res.error_message),
+            ))
+        }
+    }
+
+    /// Get the status of an async task
+    pub async fn get_task_status(&mut self, task_id: String) -> AriaResult<quilt_proto::GetTaskStatusResponse> {
+        let request = quilt_proto::GetTaskStatusRequest { task_id };
+        let response = self.client.get_task_status(request).await.map_err(to_aria_error)?;
+        Ok(response.into_inner())
+    }
+
+    /// Get the result of a completed async task
+    pub async fn get_task_result(&mut self, task_id: String) -> AriaResult<quilt_proto::GetTaskResultResponse> {
+        let request = quilt_proto::GetTaskResultRequest { task_id };
+        let response = self.client.get_task_result(request).await.map_err(to_aria_error)?;
+        Ok(response.into_inner())
+    }
+
+    /// List tasks for a container
+    pub async fn list_tasks(&mut self, container_id: String, status_filter: Option<quilt_proto::TaskStatus>) -> AriaResult<Vec<quilt_proto::TaskInfo>> {
+        let request = quilt_proto::ListTasksRequest {
+            container_id,
+            status_filter: status_filter.unwrap_or(quilt_proto::TaskStatus::TaskUnspecified) as i32,
+        };
+        let response = self.client.list_tasks(request).await.map_err(to_aria_error)?;
+        Ok(response.into_inner().tasks)
+    }
+
+    /// Cancel a running async task
+    pub async fn cancel_task(&mut self, task_id: String) -> AriaResult<bool> {
+        let request = quilt_proto::CancelTaskRequest { task_id };
+        let response = self.client.cancel_task(request).await.map_err(to_aria_error)?;
+        let res = response.into_inner();
+        
+        if res.success {
+            Ok(true)
+        } else {
+            Err(AriaError::new(
+                ErrorCode::ContainerOperationFailed,
+                ErrorCategory::Container,
+                ErrorSeverity::Medium,
+                &format!("Failed to cancel task: {}", res.error_message),
+            ))
+        }
     }
 }
 
