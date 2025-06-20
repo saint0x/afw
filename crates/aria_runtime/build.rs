@@ -10,12 +10,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .type_attribute("quilt.GetContainerNetworkInfoResponse", "#[derive(serde::Serialize)]")
         .compile_protos(&["../../crates/quilt/proto/quilt.proto"], &["../../crates/quilt/proto/"])?;
 
-    // Compile the Aria Runtime API proto
+    // Compile the Aria Runtime API proto (without serde attributes to avoid conflicts)
     tonic_build::configure()
-        .type_attribute("aria.Task", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("aria.Session", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("aria.Container", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("aria.Notification", "#[derive(serde::Serialize, serde::Deserialize)]")
         .protoc_arg("--experimental_allow_proto3_optional")
         .compile_protos(&["proto/aria.proto"], &["proto/"])?;
 

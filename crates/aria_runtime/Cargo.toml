@@ -93,6 +93,7 @@ downcast-rs = "1.2"
 # gRPC for Quilt integration
 tonic = "0.12.1"
 prost = "0.13.1"
+prost-types = "0.13.1"
 hyper-util = { version = "0.1", features = ["tokio"] }
 
 [build-dependencies]

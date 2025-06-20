@@ -310,6 +310,15 @@ impl QuiltService {
             ))
         }
     }
+
+    /// Upload a bundle via streaming
+    pub async fn upload_bundle<S>(&mut self, stream: S) -> AriaResult<quilt_proto::UploadBundleResponse>
+    where
+        S: tonic::codegen::tokio_stream::Stream<Item = Result<quilt_proto::UploadBundleRequest, tonic::Status>> + Send + 'static,
+    {
+        let response = self.client.upload_bundle(stream).await.map_err(to_aria_error)?;
+        Ok(response.into_inner())
+    }
 }
 
 /// Helper function to convert tonic::Status to AriaError

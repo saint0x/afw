@@ -27,6 +27,7 @@ pub mod database;
 pub mod deep_size;
 pub mod engines;
 pub mod errors;
+pub mod grpc;
 pub mod memory;
 pub mod planning;
 pub mod reflection;

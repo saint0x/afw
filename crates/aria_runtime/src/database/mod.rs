@@ -167,6 +167,11 @@ impl DatabaseManager {
             ))
     }
 
+    /// Get system database pool (convenience method)
+    pub fn pool(&self) -> impl std::future::Future<Output = AriaResult<sqlx::SqlitePool>> + '_ {
+        self.get_system_database()
+    }
+
     /// Create a new SQLite connection pool
     async fn create_pool(&self, db_path: &Path) -> AriaResult<sqlx::SqlitePool> {
         let database_url = format!("sqlite:{}", db_path.display());

@@ -158,7 +158,141 @@ message ToolDefinition {
 
 ---
 
-## 4. Define and Implement Settings Persistence
+## 4. Fix gRPC Service Compilation Errors
+
+**Gap:** The current gRPC service implementations have compilation errors that prevent the runtime from building.
+
+**Action:** Systematically fix all compilation issues to ensure a working implementation.
+
+### Required Fixes
+- Add missing helper methods on `AriaError` (`not_found()`, `database_error()`)
+- Fix database pool access methods on `DatabaseManager`
+- Add missing trait imports for `ToolRegistryInterface`
+- Fix protobuf enum variant name mismatches
+- Correct notification structure to match generated protobuf types
+- Add missing `prost-types` imports where needed
+
+### Implementation Notes
+- Ensure all services compile and integrate properly with existing infrastructure
+- Maintain type safety and proper error propagation
+- Follow established patterns from existing codebase
+
+---
+
+## 5. Add Database Schema for gRPC Services
+
+**Gap:** The gRPC services require database tables for sessions, messages, and notifications that don't exist yet.
+
+**Action:** Create comprehensive database schema and migration system.
+
+### Required Tables
+```sql
+-- Sessions table
+CREATE TABLE sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    context_data TEXT NOT NULL -- JSON
+);
+
+-- Messages table  
+CREATE TABLE messages (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    role TEXT NOT NULL, -- 'system', 'user', 'assistant', 'tool'
+    content TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+
+-- Notifications table
+CREATE TABLE notifications (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    type TEXT NOT NULL, -- 'info', 'warning', 'error', 'success'
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    metadata_json TEXT NOT NULL, -- JSON
+    created_at INTEGER NOT NULL,
+    read BOOLEAN NOT NULL DEFAULT FALSE
+);
+```
+
+### Implementation Notes
+- Integrate with existing `DatabaseManager` initialization
+- Add proper indices for performance
+- Ensure foreign key constraints are enforced
+
+---
+
+## 6. Create Main gRPC Server Binary
+
+**Gap:** No main server binary exists to start and coordinate all gRPC services.
+
+**Action:** Create a production-ready server binary that initializes and serves all gRPC services.
+
+### Requirements
+- Initialize all engines (database, tool registry, intelligence, etc.)
+- Start all gRPC services (Task, Session, Container, Notification, Bundle)
+- Proper graceful shutdown handling
+- Comprehensive logging and observability
+- Configuration management
+- Health checks and readiness probes
+
+### Implementation Notes
+- Use `tonic::transport::Server` for serving multiple services
+- Implement proper signal handling for graceful shutdown
+- Add structured logging with `tracing`
+- Include metrics collection and health endpoints
+
+---
+
+## 7. Add Comprehensive Error Handling and Logging
+
+**Gap:** Current error handling is incomplete and logging is inconsistent across services.
+
+**Action:** Implement production-grade error handling and structured logging.
+
+### Requirements
+- Consistent error propagation patterns across all services
+- Structured logging with correlation IDs
+- Proper error context and stack traces
+- Client-safe error messages (no internal details leaked)
+- Metrics and alerting for error rates
+
+### Implementation Notes
+- Use `tracing` spans for request correlation
+- Implement error middleware for consistent handling
+- Add proper error categorization and severity levels
+- Include performance metrics and timing information
+
+---
+
+## 8. End-to-End API Testing
+
+**Gap:** No comprehensive testing framework exists for the complete gRPC API surface.
+
+**Action:** Create thorough end-to-end test suite covering all services and integration scenarios.
+
+### Test Coverage
+- All gRPC service methods and streaming endpoints
+- Error conditions and edge cases
+- Database integration and transaction handling
+- Tool registry and bundle integration
+- Session lifecycle and conversation flows
+- Notification broadcasting and subscription
+
+### Implementation Notes
+- Use `tonic-test` for gRPC service testing
+- Create test fixtures and mock data
+- Implement test database isolation
+- Add performance and load testing scenarios
+- Include integration tests with real containers and tools
+
+---
+
+## 9. Define and Implement Settings Persistence
 
 **Gap:** The contract is silent on how client settings (e.g., model choice) are persisted.
 

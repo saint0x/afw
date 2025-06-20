@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use tokio::sync::Mutex;
 use tokio_stream::{wrappers::ReceiverStream, Stream};
-use tonic::{Request, Response, Status};
+use tonic::{Request, Response, Status, Streaming};
 
 use super::aria::{
     task_service_server::TaskService,
@@ -13,6 +13,7 @@ use super::aria::{
 };
 
 use crate::engines::container::quilt::QuiltService;
+use crate::engines::container::quilt::quilt_proto;
 use crate::database::DatabaseManager;
 use crate::errors::{AriaError, AriaResult};
 
@@ -157,15 +158,15 @@ impl TaskServiceImpl {
     }
 
     /// Convert Aria TaskStatus filter to Quilt TaskStatus
-    fn convert_aria_status_to_quilt_status(aria_status: TaskStatus) -> quilt::quilt_proto::TaskStatus {
-        match aria_status {
-            TaskStatus::TaskStatusUnspecified => quilt::quilt_proto::TaskStatus::TaskUnspecified,
-            TaskStatus::Pending => quilt::quilt_proto::TaskStatus::TaskPending,
-            TaskStatus::Running => quilt::quilt_proto::TaskStatus::TaskRunning,
-            TaskStatus::Completed => quilt::quilt_proto::TaskStatus::TaskCompleted,
-            TaskStatus::Failed => quilt::quilt_proto::TaskStatus::TaskFailed,
-            TaskStatus::Cancelled => quilt::quilt_proto::TaskStatus::TaskCancelled,
-            TaskStatus::Timeout => quilt::quilt_proto::TaskStatus::TaskTimeout,
+    fn convert_aria_status_to_quilt_status(status: TaskStatus) -> quilt_proto::TaskStatus {
+        match status {
+            TaskStatus::Unspecified => quilt_proto::TaskStatus::TaskUnspecified,
+            TaskStatus::Pending => quilt_proto::TaskStatus::TaskPending,
+            TaskStatus::Running => quilt_proto::TaskStatus::TaskRunning,
+            TaskStatus::Completed => quilt_proto::TaskStatus::TaskCompleted,
+            TaskStatus::Failed => quilt_proto::TaskStatus::TaskFailed,
+            TaskStatus::Cancelled => quilt_proto::TaskStatus::TaskCancelled,
+            TaskStatus::Timeout => quilt_proto::TaskStatus::TaskTimeout,
         }
     }
 }
@@ -287,7 +288,7 @@ impl TaskService for TaskServiceImpl {
             let status_filter = if !req.filter_by_status.is_empty() {
                 // Use the first status filter for now
                 Some(Self::convert_aria_status_to_quilt_status(
-                    TaskStatus::try_from(req.filter_by_status[0]).unwrap_or(TaskStatus::TaskStatusUnspecified)
+                    TaskStatus::try_from(req.filter_by_status[0]).unwrap_or(TaskStatus::Unspecified)
                 ))
             } else {
                 None

@@ -185,6 +185,26 @@ impl AriaError {
     pub fn is_timeout(&self) -> bool {
         matches!(self.code, ErrorCode::Timeout)
     }
+
+    /// Creates a "not found" error
+    pub fn not_found(message: &str) -> Self {
+        Self::new(
+            ErrorCode::BundleNotFound, // Generic not found
+            ErrorCategory::System,
+            ErrorSeverity::Medium,
+            message,
+        )
+    }
+
+    /// Creates a database error
+    pub fn database_error(message: &str) -> Self {
+        Self::new(
+            ErrorCode::DatabaseError,
+            ErrorCategory::System,
+            ErrorSeverity::High,
+            message,
+        )
+    }
 }
 
 // Conversion from serde_json::Error
