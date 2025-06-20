@@ -32,7 +32,7 @@ impl TaskServiceImpl {
     }
 
     /// Convert from Quilt's TaskInfo to our high-level Task
-    fn convert_quilt_task_info_to_aria_task(quilt_task: &quilt::quilt_proto::TaskInfo) -> Task {
+    fn convert_quilt_task_info_to_aria_task(quilt_task: &quilt_proto::TaskInfo) -> Task {
         let status = match quilt_task.status {
             1 => TaskStatus::Pending,      // TASK_PENDING
             2 => TaskStatus::Running,      // TASK_RUNNING  
@@ -92,7 +92,7 @@ impl TaskServiceImpl {
     fn convert_quilt_task_status_to_aria_task(
         task_id: String, 
         container_id: String,
-        status_response: &quilt::quilt_proto::GetTaskStatusResponse
+        status_response: &quilt_proto::GetTaskStatusResponse
     ) -> Task {
         let status = match status_response.status {
             1 => TaskStatus::Pending,      // TASK_PENDING
@@ -294,7 +294,7 @@ impl TaskService for TaskServiceImpl {
                 None
             };
             
-            match quilt_service.list_tasks(container.container_id, status_filter).await {
+            match quilt_service.list_tasks(container.container_id.clone(), status_filter).await {
                 Ok(tasks) => {
                     for task_info in tasks {
                         let aria_task = Self::convert_quilt_task_info_to_aria_task(&task_info);

@@ -314,7 +314,7 @@ impl QuiltService {
     /// Upload a bundle via streaming
     pub async fn upload_bundle<S>(&mut self, stream: S) -> AriaResult<quilt_proto::UploadBundleResponse>
     where
-        S: tonic::codegen::tokio_stream::Stream<Item = Result<quilt_proto::UploadBundleRequest, tonic::Status>> + Send + 'static,
+        S: tonic::codegen::tokio_stream::Stream<Item = quilt_proto::UploadBundleRequest> + Send + 'static,
     {
         let response = self.client.upload_bundle(stream).await.map_err(to_aria_error)?;
         Ok(response.into_inner())

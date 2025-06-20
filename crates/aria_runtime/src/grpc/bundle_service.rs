@@ -111,14 +111,19 @@ impl BundleService for BundleServiceImpl {
         // Create bundle metadata for Quilt
         let quilt_metadata = quilt_proto::BundleMetadata {
             name: metadata.name.clone(),
-            version: "1.0.0".to_string(), // Default version if not specified
+            version: "1.0.0".to_string(),
             description: "Bundle uploaded via Aria Runtime API".to_string(),
-            author: "aria-runtime".to_string(),
-            tags: std::collections::HashMap::new(),
-            total_size: bundle_data.len() as u64,
-            checksum: format!("{:x}", md5::compute(&bundle_data)),
-            dependencies: std::collections::HashMap::new(),
-            entry_point: "".to_string(),
+            total_size_bytes: bundle_data.len() as u64,
+            chunk_size_bytes: 64 * 1024, // 64KB chunks
+            blake3_hash: "".to_string(), // Will be calculated by Quilt
+            signature: "".to_string(),   // No signature for now
+            uploader_identity: "aria-runtime".to_string(),
+            metadata_fields: {
+                let mut fields = std::collections::HashMap::new();
+                fields.insert("original_name".to_string(), metadata.name.clone());
+                fields.insert("upload_source".to_string(), "aria-runtime-api".to_string());
+                fields
+            },
         };
         
         // Send metadata first
@@ -126,7 +131,7 @@ impl BundleService for BundleServiceImpl {
             payload: Some(quilt_proto::upload_bundle_request::Payload::Metadata(quilt_metadata)),
         };
         
-        if let Err(_) = tx.send(Ok(metadata_request)).await {
+        if let Err(_) = tx.send(metadata_request).await {
             return Err(Status::internal("Failed to send metadata to Quilt"));
         }
         
@@ -137,7 +142,7 @@ impl BundleService for BundleServiceImpl {
                 payload: Some(quilt_proto::upload_bundle_request::Payload::Chunk(chunk.to_vec())),
             };
             
-            if let Err(_) = tx.send(Ok(chunk_request)).await {
+            if let Err(_) = tx.send(chunk_request).await {
                 return Err(Status::internal("Failed to send chunk to Quilt"));
             }
         }
